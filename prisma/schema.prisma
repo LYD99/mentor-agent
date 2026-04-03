@@ -1,0 +1,322 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile        UserProfile?
+  contextItems   UserContextItem[]
+  chatSessions   ChatSession[]
+  growthMaps     GrowthMap[]
+  userConfigs    UserConfig[]
+}
+
+model UserProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  currentLevel       String?
+  interests          String?
+  goals              String?
+  learningStyleJson  String?
+  traitsJson         String?
+  agentSummary       String?
+  profileVersion     Int       @default(1)
+  lastSynthesizedAt  DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model UserContextItem {
+  id          String    @id @default(cuid())
+  userId      String
+  category    String
+  title       String
+  contentText String?
+  contentJson String?
+  source      String
+  confidence  Float     @default(1.0)
+  pinned      Boolean   @default(false)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, category])
+}
+
+model ChatSession {
+  id            String    @id @default(cuid())
+  userId        String
+  channel       String
+  title         String?
+  jsonlPath     String    // 核心：JSONL 文件路径，唯一的消息数据源
+  messageCount  Int       @default(0)
+  lastMessageAt DateTime?
+  growthMapId   String?
+  lessonId      String?
+  taskId        String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, channel])
+  @@index([lastMessageAt])
+}
+
+// ChatMessageIndex 表已移除（v2.4）
+// 原因：实际使用中只需要 jsonlPath，索引表未被有效利用
+// 消息数据完全存储在 JSONL 文件中
+// JSONL 格式包含 state 字段，支持工具调用状态跟踪
+
+// ToolCallExecution 表已移除（v2.3）
+// 工具调用信息现在直接存储在 JSONL 消息流的 state 字段中
+
+// 已废弃：GrowthRequest 和 ResearchResult 表
+// 原因：未实际使用，搜索功能直接调用 searchWeb() 不保存到数据库
+// model GrowthRequest { ... }
+// model ResearchResult { ... }
+
+// v2.5: GrowthGoal 表已移除
+// 原因：Goal 层级价值不明确，实际调度和执行都基于 Task
+// Goal 信息在 AI 生成时作为上下文，不再单独存储
+
+// v2.5: learningPlanJson 字段已移除
+// 原因：大 JSON 字段不利于查询，已拆分为 DailyPlan 表
+
+model GrowthMap {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  description String?
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user   User          @relation(fields: [userId], references: [id])
+  stages GrowthStage[]
+}
+
+model GrowthStage {
+  id            String   @id @default(cuid())
+  mapId         String
+  stageOrder    Int
+  title         String
+  description   String?
+  durationWeeks Int?
+  createdAt     DateTime @default(now())
+
+  map   GrowthMap      @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  tasks LearningTask[]
+
+  @@index([mapId, stageOrder])
+}
+
+// v2.5: 重命名为 LearningTask，直接属于 Stage
+model LearningTask {
+  id           String    @id @default(cuid())
+  stageId      String
+  taskOrder    Int
+  title        String
+  description  String?
+  type         String
+  durationDays Int?
+  status       String    @default("pending")
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  stage GrowthStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, taskOrder])
+  @@index([status])
+}
+
+// v2.5: 每日学习计划表（替代 learningPlanJson）
+model DailyPlan {
+  id        String   @id @default(cuid())
+  mapId     String
+  taskId    String
+  planDate  DateTime // 计划日期
+  metadata  String?  // JSON: learningObjectives, difficulty, suggestedDuration, etc.
+  createdAt DateTime @default(now())
+
+  @@unique([mapId, taskId, planDate])
+  @@index([mapId, planDate])
+  @@index([taskId])
+  @@index([planDate])
+}
+
+// v2.5: ScheduledTask 不再关联 GrowthMap（弱关联）
+model ScheduledTask {
+  id             String   @id @default(cuid())
+  mapId          String
+  userId         String
+  taskType       String
+  cronExpression String
+  contentJson    String?
+  status         String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([mapId, status])
+  @@index([userId, status])
+  @@index([status])
+}
+
+model SystemConfig {
+  id           String   @id @default(cuid())
+  category     String
+  key          String
+  value        String
+  valueType    String
+  label        String
+  description  String?
+  defaultValue String
+  validation   String?
+  isPublic     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([category, key])
+  @@index([category])
+}
+
+model UserConfig {
+  id        String   @id @default(cuid())
+  userId    String
+  category  String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, category, key])
+  @@index([userId, category])
+}
+
+model ExternalBot {
+  id          String   @id @default(cuid())
+  name        String
+  platform    String
+  description String?
+  webhookUrl  String?
+  appId       String?
+  appSecret   String?
+  token       String?
+  aesKey      String?
+  enabled     Boolean  @default(true)
+  config      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([platform])
+  @@index([enabled])
+}
+
+// 学习资料模型（v2.5 优化）
+model LearningMaterial {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String   // 'daily_lesson' | 'user_note' | 'ai_summary' | 'custom'
+  title           String
+  contentMarkdown String
+  contentJson     String?  // 额外的结构化数据
+  source          String?  // 来源：'ai_generated' | 'user_created' | 'system'
+  mapId           String?  // 关联的成长地图
+  taskId          String?  // 关联的任务
+  dailyPlanId     String?  // v2.5: 关联的每日计划（用于去重）
+  tags            String?  // JSON array of tags
+  status          String   @default("active") // 'active' | 'archived'
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, type, createdAt])
+  @@index([mapId])
+  @@index([taskId])
+  @@index([dailyPlanId])
+}
+
+// 日报模型
+model DailyReport {
+  id              String   @id @default(cuid())
+  userId          String
+  reportDate      DateTime // 日报日期
+  type            String   // 'user' | 'ai_generated'
+  title           String
+  contentMarkdown String
+  summaryJson     String?  // 结构化摘要：学习时长、完成任务数等
+  mapId           String?  // 关联的成长地图
+  mood            String?  // 学习心情/状态
+  achievements    String?  // JSON array of achievements
+  challenges      String?  // JSON array of challenges
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, reportDate, type])
+  @@index([userId, reportDate])
+  @@index([mapId])
+}
+
+// 周报模型
+model WeeklyReport {
+  id              String   @id @default(cuid())
+  userId          String
+  weekStartDate   DateTime // 周开始日期
+  weekEndDate     DateTime // 周结束日期
+  type            String   // 'user' | 'ai_generated'
+  title           String
+  contentMarkdown String
+  summaryJson     String?  // 结构化摘要
+  mapId           String?
+  weekNumber      Int?     // 第几周
+  highlights      String?  // JSON array of highlights
+  metrics         String?  // JSON object with metrics
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, weekStartDate, type])
+  @@index([userId, weekStartDate])
+  @@index([mapId])
+}
+
+// 月报模型
+model MonthlyReport {
+  id              String   @id @default(cuid())
+  userId          String
+  year            Int
+  month           Int      // 1-12
+  type            String   // 'user' | 'ai_generated'
+  title           String
+  contentMarkdown String
+  summaryJson     String?  // 结构化摘要
+  mapId           String?
+  achievements    String?  // JSON array
+  insights        String?  // JSON array
+  metrics         String?  // JSON object
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, year, month, type])
+  @@index([userId, year, month])
+  @@index([mapId])
+}

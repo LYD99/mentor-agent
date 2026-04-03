@@ -1,0 +1,55 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# data directory
+/data/**/*.db
+/data/**/*.db-journal
+/data/local/sessions/*.jsonl
+/data/test-sessions/
+
+# prisma data
+/prisma/data/*.db
+/prisma/data/*.db-journal
+
+# personal notes (不要提交到公开仓库)
+/mythinking/
+
+# Keep .gitkeep files
+!**/.gitkeep
