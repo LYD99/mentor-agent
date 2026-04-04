@@ -480,11 +480,24 @@ export default function MaterialsPage() {
               <div className="rounded-lg border border-border bg-card p-4">
                 <FolderManager
                   folders={folders}
+                  materials={materials}
                   selectedFolderId={selectedFolderId}
                   onSelectFolder={setSelectedFolderId}
                   onRefresh={() => {
                     loadFolders()
                     loadMaterials()
+                  }}
+                  onMaterialClick={(materialId) => {
+                    const material = materials.find((m) => m.id === materialId)
+                    if (material) {
+                      window.location.href = getMaterialLink(material)
+                    }
+                  }}
+                  onDeleteMaterial={(materialId) => {
+                    const material = materials.find((m) => m.id === materialId)
+                    if (material) {
+                      handleDeleteMaterial(new MouseEvent('click') as any, material)
+                    }
                   }}
                 />
               </div>
@@ -657,10 +670,11 @@ export default function MaterialsPage() {
               )
             })}
 
-            {/* Materials without Growth Map */}
+            {/* Materials without Growth Map and Folder */}
             {(() => {
+              // 只显示既没有 mapId 也没有 folderId 的资料
               const unmappedMaterials = filteredMaterials.filter(
-                (m) => !m.mapId && m.category === 'materials'
+                (m) => !m.mapId && !m.folderId && m.category === 'materials'
               )
               if (unmappedMaterials.length === 0) return null
 

@@ -5,14 +5,19 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ArrowLeft, Loader2, Home, Trash2, MessageCircleQuestion } from 'lucide-react'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { ArrowLeft, Loader2, Home, Trash2, MessageCircleQuestion, Copy, Check, ZoomIn, X, Edit, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { MarkdownEditor } from '@/components/materials/markdown-editor'
 
 type MaterialData = {
   id: string
   title: string
   type: string
   contentMarkdown: string
+  contentJson: string | null
   source: string | null
   createdAt: string
   mapId: string | null
@@ -27,10 +32,27 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
   const [deleting, setDeleting] = useState(false)
   const [materialId, setMaterialId] = useState<string | null>(null)
   
+  // 编辑模式相关状态
+  const [isEditing, setIsEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editData, setEditData] = useState({
+    title: '',
+    contentMarkdown: '',
+  })
+  
   // 文本选择相关状态
   const [selectedText, setSelectedText] = useState('')
   const [selectionPosition, setSelectionPosition] = useState<{ x: number; y: number } | null>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  
+  // 代码复制状态
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  
+  // 图片预览状态
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
+  
+  // 图片数据映射（从 metadata 中解析）
+  const [imageMap, setImageMap] = useState<Record<string, string>>({})
 
   useEffect(() => {
     params.then(p => {
@@ -56,6 +78,25 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
       if (res.ok) {
         const data = await res.json()
         setMaterial(data.material)
+        
+        // 初始化编辑数据
+        setEditData({
+          title: data.material.title,
+          contentMarkdown: data.material.contentMarkdown,
+        })
+        
+        // 解析 contentJson 中的图片数据
+        if (data.material.contentJson) {
+          try {
+            const contentData = JSON.parse(data.material.contentJson)
+            if (contentData.metadata?.images) {
+              console.log('[Material] Found images in metadata:', Object.keys(contentData.metadata.images).length)
+              setImageMap(contentData.metadata.images)
+            }
+          } catch (e) {
+            console.error('[Material] Failed to parse contentJson:', e)
+          }
+        }
       } else {
         const data = await res.json()
         setError(data.error || '加载失败')
@@ -92,6 +133,114 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
       alert('删除失败')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // 进入编辑模式
+  const handleEdit = () => {
+    if (material) {
+      setEditData({
+        title: material.title,
+        contentMarkdown: material.contentMarkdown,
+      })
+      setIsEditing(true)
+    }
+  }
+
+  // 取消编辑
+  const handleCancelEdit = () => {
+    setIsEditing(false)
+    if (material) {
+      setEditData({
+        title: material.title,
+        contentMarkdown: material.contentMarkdown,
+      })
+    }
+  }
+
+  // 从 Markdown 中提取实际使用的图片 ID
+  const extractUsedImageIds = (markdown: string): string[] => {
+    const imageRegex = /!\[.*?\]\((image_[a-z0-9_]+)\)/g
+    const matches = markdown.matchAll(imageRegex)
+    const ids: string[] = []
+    
+    for (const match of matches) {
+      ids.push(match[1])
+    }
+    
+    return ids
+  }
+
+  // 保存编辑
+  const handleSave = async () => {
+    if (!materialId) return
+
+    setSaving(true)
+    try {
+      // 提取 Markdown 中实际使用的图片 ID
+      const usedImageIds = extractUsedImageIds(editData.contentMarkdown)
+      
+      // 只保留实际使用的图片数据
+      const cleanedImageMap: Record<string, string> = {}
+      usedImageIds.forEach(id => {
+        if (imageMap[id]) {
+          cleanedImageMap[id] = imageMap[id]
+        }
+      })
+      
+      console.log('[Material] Cleaning images:', {
+        total: Object.keys(imageMap).length,
+        used: Object.keys(cleanedImageMap).length,
+        removed: Object.keys(imageMap).length - Object.keys(cleanedImageMap).length
+      })
+      
+      // 构建 contentJson，只包含使用的图片映射
+      const contentJson = JSON.stringify({
+        metadata: {
+          images: cleanedImageMap,
+        },
+        updatedAt: new Date().toISOString(),
+      })
+
+      const response = await fetch(`/api/materials/${materialId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          title: editData.title,
+          contentMarkdown: editData.contentMarkdown,
+          contentJson,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setMaterial(data.material)
+        setIsEditing(false)
+        // 重新加载以获取最新数据
+        await loadMaterial()
+      } else {
+        const result = await response.json()
+        alert(`保存失败: ${result.error}`)
+      }
+    } catch (error) {
+      console.error('Save material error:', error)
+      alert('保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // 复制代码到剪贴板
+  const handleCopyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopiedCode(code)
+      setTimeout(() => setCopiedCode(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy code:', err)
     }
   }
 
@@ -222,22 +371,55 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
               </Button>
             </Link>
             <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleDelete}
-                disabled={deleting}
-                className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-              >
-                <Trash2 className="h-4 w-4" />
-                {deleting ? '删除中...' : '删除'}
-              </Button>
-              <Link href="/">
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <Home className="h-4 w-4" />
-                  返回首页
-                </Button>
-              </Link>
+              {!isEditing ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleEdit}
+                    className="gap-2"
+                  >
+                    <Edit className="h-4 w-4" />
+                    编辑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {deleting ? '删除中...' : '删除'}
+                  </Button>
+                  <Link href="/">
+                    <Button variant="ghost" size="sm" className="gap-2">
+                      <Home className="h-4 w-4" />
+                      返回首页
+                    </Button>
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelEdit}
+                    disabled={saving}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="gap-2"
+                  >
+                    <Save className="h-4 w-4" />
+                    {saving ? '保存中...' : '保存'}
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -255,7 +437,20 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
           </div>
 
           {/* Title */}
-          <h1 className="text-3xl font-bold mb-2">{material.title}</h1>
+          {!isEditing ? (
+            <h1 className="text-3xl font-bold mb-2">{material.title}</h1>
+          ) : (
+            <div className="mb-4">
+              <Input
+                type="text"
+                value={editData.title}
+                onChange={(e) => setEditData({ ...editData, title: e.target.value })}
+                className="text-3xl font-bold border-2"
+                placeholder="输入标题"
+                disabled={saving}
+              />
+            </div>
+          )}
           
           {/* Meta Info */}
           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
@@ -282,14 +477,133 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
 
         {/* Content */}
         <div className="rounded-lg border border-border bg-card p-6 sm:p-8 relative">
-          <div 
-            ref={contentRef}
-            className="prose prose-sm sm:prose-base max-w-none prose-headings:font-bold prose-headings:text-foreground prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground prose-a:text-primary hover:prose-a:underline prose-code:text-foreground prose-pre:bg-muted prose-pre:border prose-pre:border-border"
-          >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {material.contentMarkdown}
-            </ReactMarkdown>
-          </div>
+          {!isEditing ? (
+            <div 
+              ref={contentRef}
+              className="prose prose-sm sm:prose-base max-w-none prose-headings:font-bold prose-headings:text-foreground prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground prose-a:text-primary hover:prose-a:underline"
+            >
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                img({ node, src, alt, ...props }: any) {
+                  // 从 imageMap 中获取实际的图片数据
+                  const actualSrc = imageMap[src] || src
+                  
+                  console.log('[Material] Rendering img:', { 
+                    placeholder: src,
+                    hasMapping: !!imageMap[src],
+                    actualSrcLength: actualSrc?.length || 0,
+                    alt
+                  })
+                  
+                  if (!actualSrc || actualSrc === '') {
+                    console.warn('[Material] Skipping img with empty src, alt:', alt)
+                    return null
+                  }
+                  
+                  // 使用 span 而不是 div，避免在 p 标签内嵌套 div 的问题
+                  return (
+                    <span className="block my-4">
+                      <span className="block rounded-lg overflow-hidden border border-border bg-muted/30">
+                        <span className="relative group block">
+                          <img
+                            src={actualSrc}
+                            alt={alt || '图片'}
+                            className="w-full h-auto cursor-pointer transition-transform hover:scale-[1.02]"
+                            onClick={() => setPreviewImage(actualSrc)}
+                            loading="lazy"
+                            {...props}
+                          />
+                          <button
+                            onClick={() => setPreviewImage(actualSrc)}
+                            className="absolute top-2 right-2 p-2 rounded-lg bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="查看大图"
+                          >
+                            <ZoomIn className="h-4 w-4" />
+                          </button>
+                        </span>
+                        {alt && (
+                          <span className="block px-4 py-2 text-xs text-muted-foreground text-center bg-muted/50">
+                            {alt}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  )
+                },
+                code({ node, inline, className, children, ...props }: any) {
+                  const match = /language-(\w+)/.exec(className || '')
+                  const codeString = String(children).replace(/\n$/, '')
+                  const language = match ? match[1] : ''
+                  
+                  if (!inline && language) {
+                    // 代码块
+                    return (
+                      <div className="relative group my-4">
+                        <div className="flex items-center justify-between bg-zinc-800 text-zinc-100 px-4 py-2 rounded-t-lg border border-zinc-700">
+                          <span className="text-xs font-medium uppercase">{language}</span>
+                          <button
+                            onClick={() => handleCopyCode(codeString)}
+                            className="flex items-center gap-1.5 px-2 py-1 text-xs rounded hover:bg-zinc-700 transition-colors"
+                            title="复制代码"
+                          >
+                            {copiedCode === codeString ? (
+                              <>
+                                <Check className="h-3 w-3" />
+                                已复制
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3 w-3" />
+                                复制
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <SyntaxHighlighter
+                          style={vscDarkPlus}
+                          language={language}
+                          PreTag="div"
+                          className="!mt-0 !rounded-t-none !rounded-b-lg !border !border-t-0 !border-zinc-700"
+                          customStyle={{
+                            margin: 0,
+                            padding: '1rem',
+                            fontSize: '0.875rem',
+                            lineHeight: '1.5',
+                          }}
+                          {...props}
+                        >
+                          {codeString}
+                        </SyntaxHighlighter>
+                      </div>
+                    )
+                  } else {
+                    // 行内代码
+                    return (
+                      <code
+                        className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-rose-600 dark:text-rose-400 text-sm font-mono border border-zinc-200 dark:border-zinc-700"
+                        {...props}
+                      >
+                        {children}
+                      </code>
+                    )
+                  }
+                },
+              }}
+              >
+                {material.contentMarkdown}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <MarkdownEditor
+              value={editData.contentMarkdown}
+              onChange={(value) => setEditData({ ...editData, contentMarkdown: value })}
+              onImagesChange={setImageMap}
+              initialImages={imageMap}
+              disabled={saving}
+              minHeight="500px"
+            />
+          )}
           
           {/* 文本选择后的浮动按钮 */}
           {selectedText && selectionPosition && (
@@ -324,6 +638,29 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
           )}
         </div>
       </div>
+      
+      {/* 图片预览模态框 */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="relative max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center">
+            <img
+              src={previewImage}
+              alt="预览"
+              className="max-w-full max-h-full object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-4 right-4 p-2 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+            >
+              <X className="h-6 w-6" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

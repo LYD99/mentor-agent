@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Upload, X, FileText, Loader2, CheckCircle2, XCircle, Folder, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,6 +50,22 @@ export function BatchUploadDialog({
   const [uploading, setUploading] = useState(false)
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 当对话框打开或 defaultFolderId 变化时，重置 folderId
+  useEffect(() => {
+    if (open) {
+      setFolderId(defaultFolderId || 'none')
+    }
+  }, [open, defaultFolderId])
+
+  // 当对话框关闭时，重置所有状态
+  useEffect(() => {
+    if (!open) {
+      setFiles([])
+      setTags('')
+      setUploading(false)
+    }
+  }, [open])
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -210,7 +226,7 @@ export function BatchUploadDialog({
         <DialogHeader>
           <DialogTitle>批量导入学习资料</DialogTitle>
           <DialogDescription>
-            支持 Markdown (.md)、纯文本 (.txt) 和 PDF (.pdf) 格式，单个文件最大 10MB
+            支持文档（.md, .txt, .pdf）、图片（.png, .jpg, .gif, .webp）、代码文件（.js, .ts, .py, .java 等），单个文件最大 10MB
           </DialogDescription>
         </DialogHeader>
 
@@ -250,12 +266,13 @@ export function BatchUploadDialog({
           {/* 拖拽上传区域 */}
           <div
             className={cn(
-              'relative border-2 border-dashed rounded-lg p-8 text-center transition-colors',
+              'relative border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer',
               dragActive
                 ? 'border-primary bg-primary/5'
-                : 'border-border hover:border-primary/50',
+                : 'border-border hover:border-primary/50 hover:bg-muted/30',
               uploading && 'opacity-50 pointer-events-none'
             )}
+            onClick={() => !uploading && fileInputRef.current?.click()}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
@@ -265,7 +282,7 @@ export function BatchUploadDialog({
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".md,.markdown,.txt,.pdf"
+              accept=".md,.markdown,.txt,.pdf,.png,.jpg,.jpeg,.gif,.webp,.svg,.js,.jsx,.ts,.tsx,.py,.java,.go,.rs,.c,.cpp,.h,.hpp,.cs,.php,.rb,.swift,.kt,.scala,.r,.sql,.sh,.bash,.html,.css,.scss,.sass,.less,.json,.xml,.yaml,.yml,.toml,.ini,.conf,.env,.vue,.svelte"
               onChange={handleFileInput}
               className="hidden"
               disabled={uploading}
@@ -273,18 +290,10 @@ export function BatchUploadDialog({
 
             <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
             <p className="text-sm font-medium mb-2">
-              拖拽文件到这里，或
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="text-primary hover:underline ml-1"
-                disabled={uploading}
-              >
-                点击选择文件
-              </button>
+              拖拽文件到这里，或点击选择文件
             </p>
             <p className="text-xs text-muted-foreground">
-              支持 .md, .txt, .pdf 格式
+              支持文档、图片、代码文件等多种格式
             </p>
           </div>
 

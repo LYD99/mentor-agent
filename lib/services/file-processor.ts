@@ -1,6 +1,6 @@
 /**
  * 文件处理服务
- * 支持 Markdown、TXT、PDF 等格式的文件解析
+ * 支持 Markdown、TXT、PDF、图片、代码文件等格式的解析
  */
 
 export interface ProcessedFile {
@@ -15,6 +15,13 @@ export interface FileMetadata {
   language?: string
   hasCodeBlocks?: boolean
   estimatedReadingTime?: number // 分钟
+  fileType?: string
+  fileSize?: number
+  imageInfo?: {
+    width?: number
+    height?: number
+    format?: string
+  }
 }
 
 export class FileProcessor {
@@ -28,17 +35,34 @@ export class FileProcessor {
     const filename = file.name
     const extension = filename.split('.').pop()?.toLowerCase()
 
-    switch (extension) {
-      case 'md':
-      case 'markdown':
-        return this.processMarkdown(file, options)
-      case 'txt':
-        return this.processText(file, options)
-      case 'pdf':
-        return this.processPDF(file, options)
-      default:
-        throw new Error(`Unsupported file type: ${extension}`)
+    // 文档类型
+    if (['md', 'markdown'].includes(extension || '')) {
+      return this.processMarkdown(file, options)
     }
+    if (extension === 'txt') {
+      return this.processText(file, options)
+    }
+    if (extension === 'pdf') {
+      return this.processPDF(file, options)
+    }
+
+    // 图片类型
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(extension || '')) {
+      return this.processImage(file, options)
+    }
+
+    // 代码文件类型
+    const codeExtensions = [
+      'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp',
+      'cs', 'php', 'rb', 'swift', 'kt', 'scala', 'r', 'sql', 'sh', 'bash',
+      'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml',
+      'toml', 'ini', 'conf', 'env', 'vue', 'svelte'
+    ]
+    if (codeExtensions.includes(extension || '')) {
+      return this.processCode(file, options)
+    }
+
+    throw new Error(`Unsupported file type: ${extension}`)
   }
 
   /**
@@ -86,6 +110,130 @@ export class FileProcessor {
       contentMarkdown,
       tags,
       metadata,
+    }
+  }
+
+  /**
+   * 处理图片文件
+   */
+  static async processImage(
+    file: File,
+    options?: { extractMetadata?: boolean }
+  ): Promise<ProcessedFile> {
+    const title = this.generateTitle(file.name, '')
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    
+    // 创建图片的 base64 数据 URL
+    const arrayBuffer = await file.arrayBuffer()
+    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    const mimeType = file.type || `image/${extension}`
+    const dataUrl = `data:${mimeType};base64,${base64}`
+    
+    // 获取图片尺寸
+    let imageInfo: { width?: number; height?: number; format?: string } = {
+      format: extension
+    }
+    
+    if (typeof window !== 'undefined') {
+      try {
+        const img = new Image()
+        await new Promise((resolve, reject) => {
+          img.onload = resolve
+          img.onerror = reject
+          img.src = dataUrl
+        })
+        imageInfo.width = img.width
+        imageInfo.height = img.height
+      } catch (error) {
+        console.warn('Failed to get image dimensions:', error)
+      }
+    }
+    
+    // 生成 Markdown 内容（使用占位符，实际图片数据存储在 metadata 中）
+    const imageId = `image_${Date.now()}_${Math.random().toString(36).substring(7)}`
+    const contentMarkdown = [
+      `# ${title}`,
+      '',
+      `> 图片文件: ${file.name}`,
+      imageInfo.width && imageInfo.height 
+        ? `> 尺寸: ${imageInfo.width} × ${imageInfo.height}` 
+        : '',
+      `> 大小: ${(file.size / 1024).toFixed(2)} KB`,
+      '',
+      '## 图片预览',
+      '',
+      `![${title}](${imageId})`,
+      '',
+      '---',
+      `*从图片文件导入: ${new Date().toLocaleString('zh-CN')}*`
+    ].filter(Boolean).join('\n')
+    
+    const metadata = {
+      fileType: 'image',
+      fileSize: file.size,
+      imageInfo,
+      // 将实际的图片数据存储在 metadata 中
+      images: {
+        [imageId]: dataUrl
+      }
+    }
+    
+    return {
+      title,
+      contentMarkdown,
+      tags: ['image', extension || 'unknown'],
+      metadata
+    }
+  }
+
+  /**
+   * 处理代码文件
+   */
+  static async processCode(
+    file: File,
+    options?: { extractMetadata?: boolean }
+  ): Promise<ProcessedFile> {
+    const content = await file.text()
+    const title = this.generateTitle(file.name, content)
+    const extension = file.name.split('.').pop()?.toLowerCase()
+    const language = this.getLanguageName(extension || '')
+    
+    // 生成 Markdown 内容
+    const contentMarkdown = [
+      `# ${title}`,
+      '',
+      `> 代码文件: ${file.name}`,
+      `> 语言: ${language}`,
+      `> 大小: ${(file.size / 1024).toFixed(2)} KB`,
+      `> 行数: ${content.split('\n').length}`,
+      '',
+      '## 代码内容',
+      '',
+      '```' + extension,
+      content,
+      '```',
+      '',
+      '---',
+      `*从代码文件导入: ${new Date().toLocaleString('zh-CN')}*`
+    ].join('\n')
+    
+    const tags = this.extractTags(content)
+    tags.push('code', language.toLowerCase().replace(/\s+/g, '-'))
+    
+    const metadata = options?.extractMetadata
+      ? {
+          ...this.extractMetadata(content),
+          fileType: 'code',
+          fileSize: file.size,
+          language
+        }
+      : undefined
+    
+    return {
+      title,
+      contentMarkdown,
+      tags: [...new Set(tags)],
+      metadata
     }
   }
 
@@ -250,10 +398,9 @@ export class FileProcessor {
       return h1Match[1].trim()
     }
 
-    // 使用文件名（去掉扩展名和特殊字符）
-    const nameWithoutExt = filename.replace(/\.[^/.]+$/, '')
-    if (nameWithoutExt && nameWithoutExt.length > 0) {
-      return nameWithoutExt
+    // 使用文件名（保留扩展名，只替换特殊字符）
+    if (filename && filename.length > 0) {
+      return filename
         .replace(/[-_]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
@@ -269,11 +416,106 @@ export class FileProcessor {
   }
 
   /**
+   * 获取编程语言名称
+   */
+  static getLanguageName(extension: string): string {
+    const languageMap: Record<string, string> = {
+      // JavaScript/TypeScript
+      js: 'JavaScript',
+      jsx: 'JavaScript (JSX)',
+      ts: 'TypeScript',
+      tsx: 'TypeScript (TSX)',
+      
+      // Python
+      py: 'Python',
+      
+      // Java/Kotlin
+      java: 'Java',
+      kt: 'Kotlin',
+      
+      // C/C++
+      c: 'C',
+      cpp: 'C++',
+      cc: 'C++',
+      cxx: 'C++',
+      h: 'C/C++ Header',
+      hpp: 'C++ Header',
+      
+      // C#
+      cs: 'C#',
+      
+      // Go
+      go: 'Go',
+      
+      // Rust
+      rs: 'Rust',
+      
+      // PHP
+      php: 'PHP',
+      
+      // Ruby
+      rb: 'Ruby',
+      
+      // Swift
+      swift: 'Swift',
+      
+      // Scala
+      scala: 'Scala',
+      
+      // R
+      r: 'R',
+      
+      // Shell
+      sh: 'Shell',
+      bash: 'Bash',
+      
+      // SQL
+      sql: 'SQL',
+      
+      // Web
+      html: 'HTML',
+      css: 'CSS',
+      scss: 'SCSS',
+      sass: 'Sass',
+      less: 'Less',
+      vue: 'Vue',
+      svelte: 'Svelte',
+      
+      // Data
+      json: 'JSON',
+      xml: 'XML',
+      yaml: 'YAML',
+      yml: 'YAML',
+      toml: 'TOML',
+      ini: 'INI',
+      conf: 'Config',
+      env: 'Environment',
+    }
+    
+    return languageMap[extension] || extension.toUpperCase()
+  }
+
+  /**
    * 验证文件类型
    */
   static isSupportedFileType(filename: string): boolean {
     const extension = filename.split('.').pop()?.toLowerCase()
-    return ['md', 'markdown', 'txt', 'pdf'].includes(extension || '')
+    
+    // 文档类型
+    const documentTypes = ['md', 'markdown', 'txt', 'pdf']
+    
+    // 图片类型
+    const imageTypes = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
+    
+    // 代码类型
+    const codeTypes = [
+      'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp',
+      'cs', 'php', 'rb', 'swift', 'kt', 'scala', 'r', 'sql', 'sh', 'bash',
+      'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml',
+      'toml', 'ini', 'conf', 'env', 'vue', 'svelte'
+    ]
+    
+    return [...documentTypes, ...imageTypes, ...codeTypes].includes(extension || '')
   }
 
   /**
@@ -288,12 +530,28 @@ export class FileProcessor {
    */
   static getFileTypeDescription(filename: string): string {
     const extension = filename.split('.').pop()?.toLowerCase()
-    const typeMap: Record<string, string> = {
-      md: 'Markdown 文档',
-      markdown: 'Markdown 文档',
-      txt: '纯文本文档',
-      pdf: 'PDF 文档',
+    
+    // 文档类型
+    if (['md', 'markdown'].includes(extension || '')) return 'Markdown 文档'
+    if (extension === 'txt') return '纯文本文档'
+    if (extension === 'pdf') return 'PDF 文档'
+    
+    // 图片类型
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(extension || '')) {
+      return `${extension?.toUpperCase()} 图片`
     }
-    return typeMap[extension || ''] || '未知类型'
+    
+    // 代码类型
+    const codeTypes = [
+      'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'go', 'rs', 'c', 'cpp', 'h', 'hpp',
+      'cs', 'php', 'rb', 'swift', 'kt', 'scala', 'r', 'sql', 'sh', 'bash',
+      'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml',
+      'toml', 'ini', 'conf', 'env', 'vue', 'svelte'
+    ]
+    if (codeTypes.includes(extension || '')) {
+      return `${this.getLanguageName(extension || '')} 代码文件`
+    }
+    
+    return '未知类型'
   }
 }

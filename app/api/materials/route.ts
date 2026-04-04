@@ -142,7 +142,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const { type, title, contentMarkdown, mapId, taskId, tags } = body
+    const { type, title, contentMarkdown, contentJson, mapId, taskId, tags } = body
 
     const material = await prisma.learningMaterial.create({
       data: {
@@ -150,6 +150,7 @@ export async function POST(req: Request) {
         type: type || 'custom',
         title,
         contentMarkdown,
+        contentJson: contentJson || null,
         source: 'user_created',
         mapId,
         taskId,
