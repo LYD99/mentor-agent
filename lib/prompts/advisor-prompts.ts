@@ -51,6 +51,15 @@ Content:
 - search_web: Find additional resources and up-to-date information
   Use when: User needs supplementary materials or current information
 
+- search_user_materials: Search through user's imported learning materials
+  Use when: User wants to find their own notes, documents, or imported materials
+  Example: "查找我之前导入的关于 React 的资料"
+
+- rag_retrieve: Retrieve information from external knowledge bases
+  Use when: User asks questions related to configured knowledge bases
+  Example: "查询 React 官方文档中关于 Hooks 的内容"
+
+{{RAG_DATASETS_LIST}}
 `,
 
   // 回答风格
@@ -106,6 +115,7 @@ export function buildAdvisorSystemPrompt(params: {
   lessonTitle?: string
   lessonContent?: string
   hasTaskId?: boolean
+  ragDatasetsText?: string
 }): string {
   let prompt = ADVISOR_PROMPTS.BASE_ROLE.replace('{{contextPack}}', params.contextPack)
   
@@ -150,6 +160,14 @@ The user is working on a specific learning task. Use the get_task_learning_detai
   }
   
   prompt += ADVISOR_PROMPTS.CORE_RESPONSIBILITIES
+  
+  // 注入 RAG 知识库列表
+  const toolUsageGuide = ADVISOR_PROMPTS.TOOL_USAGE_GUIDE.replace(
+    '{{RAG_DATASETS_LIST}}',
+    params.ragDatasetsText || ''
+  )
+  prompt += toolUsageGuide
+  
   prompt += ADVISOR_PROMPTS.RESPONSE_STYLE
   
   return prompt

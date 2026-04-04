@@ -85,6 +85,7 @@ export const generateLessonTool = tool({
         stageTitle: '自定义学习', // 占位符
         metadata,
         includeResearch: !params.knownMaterials, // 如果有已知资料，就不再查询
+        userId, // 传递 userId 以加载 RAG 配置
       })
 
       // 格式化为 Markdown

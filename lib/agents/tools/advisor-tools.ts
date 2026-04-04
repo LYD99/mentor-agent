@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/db'
 import { researchTool } from './research-tool'
 import { generateLessonTool } from './generate-lesson-tool'
+import { ragRetrieveTool } from './rag-tools'
 
 /**
  * Advisor 专用学情工具
@@ -263,9 +264,109 @@ Use this to understand what the user has been working on recently.`,
   })
 }
 
+/**
+ * 搜索用户导入的学习资料
+ */
+function searchUserMaterialsTool() {
+  return tool({
+    description: `搜索用户导入的学习资料。
+    
+使用场景：
+- 用户想查找之前导入的学习资料
+- 需要引用用户自己的笔记或文档
+- 根据关键词搜索相关资料
+
+输入参数：
+- query: 搜索关键词（必需）
+- folderId: 文件夹 ID（可选，用于限定搜索范围）
+- limit: 返回结果数量（可选，默认 10）
+
+输出：
+- 匹配的学习资料列表，包含标题、内容摘要、创建时间等`,
+
+    parameters: z.object({
+      query: z.string().describe('搜索关键词，例如："React Hooks"、"算法"'),
+      folderId: z.string().optional().describe('文件夹 ID（可选）'),
+      limit: z.number().optional().default(10).describe('返回结果数量，默认 10'),
+    }),
+
+    execute: async ({ query, folderId, limit = 10 }, context?: { userId?: string }) => {
+      const userId = context?.userId
+      if (!userId) {
+        throw new Error('userId is required but was not injected')
+      }
+
+      try {
+        // 构建查询条件
+        const whereClause: any = {
+          userId,
+          status: 'active',
+          OR: [
+            { title: { contains: query } },
+            { contentMarkdown: { contains: query } },
+          ],
+        }
+
+        // 如果指定了文件夹，添加过滤
+        if (folderId) {
+          whereClause.folderId = folderId
+        }
+
+        // 查询资料
+        const materials = await prisma.learningMaterial.findMany({
+          where: whereClause,
+          orderBy: { createdAt: 'desc' },
+          take: limit,
+          select: {
+            id: true,
+            title: true,
+            contentMarkdown: true,
+            type: true,
+            source: true,
+            folderId: true,
+            tags: true,
+            createdAt: true,
+          },
+        })
+
+        // 格式化结果
+        const results = materials.map((m) => ({
+          id: m.id,
+          title: m.title,
+          type: m.type,
+          source: m.source,
+          summary: m.contentMarkdown.slice(0, 200) + (m.contentMarkdown.length > 200 ? '...' : ''),
+          tags: m.tags ? JSON.parse(m.tags) : [],
+          createdAt: m.createdAt.toISOString(),
+          folderId: m.folderId,
+        }))
+
+        return {
+          success: true,
+          query,
+          total: results.length,
+          materials: results,
+          message: results.length > 0
+            ? `找到 ${results.length} 份相关资料`
+            : '未找到相关资料',
+        }
+      } catch (error) {
+        console.error('[Search User Materials] Error:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          message: '搜索失败',
+        }
+      }
+    },
+  })
+}
+
 export const advisorTools = {
   get_task_learning_detail: getTaskLearningDetailTool(),
   list_recent_learning_events: listRecentLearningEventsTool(),
   generate_lesson: generateLessonTool,
   search_web: researchTool,
+  search_user_materials: searchUserMaterialsTool(),
+  rag_retrieve: ragRetrieveTool(),
 }

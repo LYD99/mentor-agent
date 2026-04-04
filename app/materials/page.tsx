@@ -16,13 +16,19 @@ import {
   Folder,
   Grid3x3,
   Trash2,
+  Upload,
+  FolderTree,
+  ArrowLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { FolderManager, type FolderNode } from '@/components/materials/folder-manager'
+import { BatchUploadDialog } from '@/components/materials/batch-upload-dialog'
 
 type MaterialCategory = 'all' | 'daily' | 'weekly' | 'monthly' | 'materials'
-type ViewMode = 'grid' | 'folder'
+type ViewMode = 'grid' | 'growth-map' | 'folder-tree'
 
 type Material = {
   id: string
@@ -37,6 +43,7 @@ type Material = {
   month?: number
   mapId?: string | null
   taskId?: string | null
+  folderId?: string | null
   sourceTable?: 'LearningMaterial' | 'LearningLesson'
 }
 
@@ -62,11 +69,24 @@ export default function MaterialsPage() {
   const [growthMaps, setGrowthMaps] = useState<GrowthMapInfo[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  
+  // 新增：文件夹相关状态
+  const [folders, setFolders] = useState<FolderNode[]>([])
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
 
   useEffect(() => {
     loadMaterials()
     loadGrowthMaps()
-  }, [selectedCategory])
+    loadFolders()
+  }, [selectedCategory, selectedFolderId, viewMode])
+  
+  // 切换视图模式时，如果不是文件夹视图，清除文件夹选择
+  useEffect(() => {
+    if (viewMode !== 'folder-tree' && selectedFolderId) {
+      setSelectedFolderId(null)
+    }
+  }, [viewMode])
 
   const loadMaterials = async () => {
     setLoading(true)
@@ -82,12 +102,33 @@ export default function MaterialsPage() {
       })
       if (res.ok) {
         const data = await res.json()
-        setMaterials(data.materials || [])
+        let allMaterials = data.materials || []
+        
+        // 只在文件夹视图模式下，才根据 selectedFolderId 过滤资料
+        if (viewMode === 'folder-tree' && selectedFolderId) {
+          allMaterials = allMaterials.filter((m: Material) => m.folderId === selectedFolderId)
+        }
+        
+        setMaterials(allMaterials)
       }
     } catch (err) {
       console.error('Failed to load materials:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadFolders = async () => {
+    try {
+      const res = await fetch('/api/materials/folders', {
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setFolders(data.folders || [])
+      }
+    } catch (err) {
+      console.error('Failed to load folders:', err)
     }
   }
 
@@ -229,9 +270,42 @@ export default function MaterialsPage() {
     return `/materials/${material.id}`
   }
 
+  // 获取选中文件夹的信息（用于面包屑导航）
+  const getSelectedFolderInfo = (folderId: string | null): { name: string; path: string[]; parentId: string | null } | null => {
+    if (!folderId) return null
+    
+    const findFolder = (folders: FolderNode[], targetId: string, path: string[] = []): { name: string; path: string[]; parentId: string | null } | null => {
+      for (const folder of folders) {
+        const currentPath = [...path, folder.name]
+        if (folder.id === targetId) {
+          return { name: folder.name, path: currentPath, parentId: folder.parentId || null }
+        }
+        if (folder.children.length > 0) {
+          const result = findFolder(folder.children, targetId, currentPath)
+          if (result) return result
+        }
+      }
+      return null
+    }
+    
+    return findFolder(folders, folderId)
+  }
+
+  // 返回上一级文件夹
+  const handleGoBack = () => {
+    const folderInfo = getSelectedFolderInfo(selectedFolderId)
+    if (folderInfo?.parentId) {
+      // 有父文件夹，返回到父文件夹
+      setSelectedFolderId(folderInfo.parentId)
+    } else {
+      // 没有父文件夹，返回到根目录（文件夹列表）
+      setSelectedFolderId(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
-      <div className="container mx-auto max-w-6xl px-4 py-8">
+      <div className="container mx-auto max-w-7xl px-4 py-8">
         {/* Header */}
         <div className="mb-8 flex items-center justify-between">
           <div>
@@ -247,6 +321,15 @@ export default function MaterialsPage() {
                 返回首页
               </Button>
             </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setUploadDialogOpen(true)}
+              className="gap-2"
+            >
+              <Upload className="h-4 w-4" />
+              批量导入
+            </Button>
             <Link href="/materials/new">
               <Button size="sm" className="gap-2">
                 <Plus className="h-4 w-4" />
@@ -256,11 +339,13 @@ export default function MaterialsPage() {
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="mb-6 space-y-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            {/* Category Filter */}
-            <div className="flex gap-2 overflow-x-auto">
+        {/* Main Content */}
+        <div className="flex-1 min-w-0">
+            {/* Filters */}
+            <div className="mb-6 space-y-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                {/* Category Filter */}
+                <div className="flex gap-2 overflow-x-auto">
               {(Object.keys(categoryConfig) as MaterialCategory[]).map((cat) => {
                 const config = categoryConfig[cat]
                 const Icon = config.icon
@@ -281,52 +366,64 @@ export default function MaterialsPage() {
                     {config.label}
                   </button>
                 )
-              })}
+                })}
+              </div>
+
+              {/* Search */}
+              <div className="relative flex-1 sm:max-w-xs">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="搜索资料..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
             </div>
 
-            {/* Search */}
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="搜索资料..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
-            </div>
+            {/* View Mode Toggle - Only show for materials category */}
+            {selectedCategory === 'materials' && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setViewMode('grid')}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
+                    viewMode === 'grid'
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background hover:bg-muted'
+                  )}
+                >
+                  <Grid3x3 className="h-4 w-4" />
+                  网格视图
+                </button>
+                <button
+                  onClick={() => setViewMode('growth-map')}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
+                    viewMode === 'growth-map'
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background hover:bg-muted'
+                  )}
+                >
+                  <Folder className="h-4 w-4" />
+                  成长地图视图
+                </button>
+                <button
+                  onClick={() => setViewMode('folder-tree')}
+                  className={cn(
+                    'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
+                    viewMode === 'folder-tree'
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background hover:bg-muted'
+                  )}
+                >
+                  <FolderTree className="h-4 w-4" />
+                  文件夹视图
+                </button>
+              </div>
+            )}
           </div>
-
-          {/* View Mode Toggle - Only show for materials category */}
-          {selectedCategory === 'materials' && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={cn(
-                  'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
-                  viewMode === 'grid'
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background hover:bg-muted'
-                )}
-              >
-                <Grid3x3 className="h-4 w-4" />
-                网格视图
-              </button>
-              <button
-                onClick={() => setViewMode('folder')}
-                className={cn(
-                  'flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all',
-                  viewMode === 'folder'
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-background hover:bg-muted'
-                )}
-              >
-                <Folder className="h-4 w-4" />
-                文件夹视图
-              </button>
-            </div>
-          )}
-        </div>
 
         {/* Materials List */}
         {loading ? (
@@ -336,26 +433,135 @@ export default function MaterialsPage() {
               <p className="text-sm text-muted-foreground">加载中...</p>
             </div>
           </div>
-        ) : filteredMaterials.length === 0 ? (
-          <div className="rounded-lg border border-border bg-card p-12 text-center">
-            <FileText className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
-            <h3 className="mb-2 text-lg font-semibold">暂无资料</h3>
-            <p className="mb-4 text-sm text-muted-foreground">
-              {searchQuery
-                ? '没有找到匹配的资料'
-                : '开始创建你的第一份学习资料'}
-            </p>
-            {!searchQuery && (
-              <Link href="/materials/new">
-                <Button className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  新建资料
-                </Button>
-              </Link>
+        ) : viewMode === 'folder-tree' && selectedCategory === 'materials' ? (
+          // Folder Tree View - Show folder manager with materials
+          <div className="space-y-4">
+            {/* Breadcrumb Navigation */}
+            {selectedFolderId && (() => {
+              const folderInfo = getSelectedFolderInfo(selectedFolderId)
+              const hasParent = folderInfo?.parentId
+              const path = folderInfo?.path || []
+              
+              return (
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-card p-3">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleGoBack}
+                    className="gap-2 flex-shrink-0"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    {hasParent ? '返回上一级' : '返回文件夹列表'}
+                  </Button>
+                  
+                  {/* Breadcrumb Path */}
+                  <div className="flex items-center gap-1 text-sm text-muted-foreground overflow-x-auto">
+                    <Folder className="h-4 w-4 flex-shrink-0" />
+                    {path.map((name, index) => (
+                      <div key={index} className="flex items-center gap-1 flex-shrink-0">
+                        {index > 0 && <ChevronRight className="h-3 w-3" />}
+                        <span className={cn(
+                          index === path.length - 1 ? 'font-medium text-foreground' : ''
+                        )}>
+                          {name}
+                        </span>
+                      </div>
+                    ))}
+                    <span className="text-xs ml-2 flex-shrink-0">
+                      ({filteredMaterials.length} 份资料)
+                    </span>
+                  </div>
+                </div>
+              )
+            })()}
+            
+            {/* Folder Manager - Only show when no folder is selected */}
+            {!selectedFolderId && (
+              <div className="rounded-lg border border-border bg-card p-4">
+                <FolderManager
+                  folders={folders}
+                  selectedFolderId={selectedFolderId}
+                  onSelectFolder={setSelectedFolderId}
+                  onRefresh={() => {
+                    loadFolders()
+                    loadMaterials()
+                  }}
+                />
+              </div>
+            )}
+            
+            {/* Materials in selected folder */}
+            {selectedFolderId && (
+              <>
+                {filteredMaterials.length > 0 ? (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {filteredMaterials.map((material) => {
+                      const config = categoryConfig[material.category]
+                      const Icon = config.icon
+
+                      return (
+                        <div key={material.id} className="group/card relative">
+                          <Link
+                            href={getMaterialLink(material)}
+                            className="block relative overflow-hidden rounded-lg border border-border bg-card p-4 transition-all hover:shadow-md"
+                          >
+                            <div className="mb-3 flex items-start justify-between">
+                              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-100">
+                                <Icon className={cn('h-4 w-4', config.color)} />
+                              </div>
+                              {material.sourceTable === 'LearningLesson' && (
+                                <span className="rounded-full px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700">
+                                  讲义
+                                </span>
+                              )}
+                            </div>
+
+                            <h4 className="mb-2 line-clamp-2 text-sm font-semibold pr-8">
+                              {material.title}
+                            </h4>
+
+                            <p className="mb-3 line-clamp-2 text-xs text-muted-foreground">
+                              {material.contentMarkdown.slice(0, 100)}...
+                            </p>
+
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Calendar className="h-3 w-3" />
+                              {getDateDisplay(material)}
+                            </div>
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteMaterial(e, material)}
+                            disabled={deletingId === material.id}
+                            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all opacity-0 group-hover/card:opacity-100 z-10"
+                            title="删除"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border bg-card p-12 text-center">
+                    <Folder className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
+                    <h3 className="mb-2 text-lg font-semibold">文件夹为空</h3>
+                    <p className="mb-4 text-sm text-muted-foreground">
+                      这个文件夹还没有任何资料
+                    </p>
+                    <Link href="/materials/new">
+                      <Button className="gap-2">
+                        <Plus className="h-4 w-4" />
+                        添加资料
+                      </Button>
+                    </Link>
+                  </div>
+                )}
+              </>
             )}
           </div>
-        ) : viewMode === 'folder' && selectedCategory === 'materials' ? (
-          // Folder View - Group by Growth Map
+        ) : viewMode === 'growth-map' && selectedCategory === 'materials' ? (
+          // Growth Map View - Group by Growth Map
           <div className="space-y-4">
             {/* Materials with Growth Map */}
             {growthMaps.map((map) => {
@@ -545,6 +751,25 @@ export default function MaterialsPage() {
               )
             })()}
           </div>
+        ) : filteredMaterials.length === 0 ? (
+          // Empty State for Grid and Growth Map views
+          <div className="rounded-lg border border-border bg-card p-12 text-center">
+            <FileText className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" />
+            <h3 className="mb-2 text-lg font-semibold">暂无资料</h3>
+            <p className="mb-4 text-sm text-muted-foreground">
+              {searchQuery
+                ? '没有找到匹配的资料'
+                : '开始创建你的第一份学习资料'}
+            </p>
+            {!searchQuery && (
+              <Link href="/materials/new">
+                <Button className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  新建资料
+                </Button>
+              </Link>
+            )}
+          </div>
         ) : (
           // Grid View - Original view for all categories or when grid mode selected
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -623,6 +848,24 @@ export default function MaterialsPage() {
             })}
           </div>
         )}
+        </div>
+
+        {/* Batch Upload Dialog */}
+        <BatchUploadDialog
+          open={uploadDialogOpen}
+          onClose={() => setUploadDialogOpen(false)}
+          onSuccess={() => {
+            loadMaterials()
+            loadFolders()
+          }}
+          folders={folders.flatMap(function flattenFolders(folder): Array<{ id: string; name: string }> {
+            return [
+              { id: folder.id, name: folder.name },
+              ...folder.children.flatMap(flattenFolders)
+            ]
+          })}
+          defaultFolderId={selectedFolderId || undefined}
+        />
       </div>
     </div>
   )

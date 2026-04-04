@@ -23,6 +23,7 @@ model User {
   chatSessions   ChatSession[]
   growthMaps     GrowthMap[]
   userConfigs    UserConfig[]
+  ragDatasets    RagDataset[]
 }
 
 model UserProfile {
@@ -233,27 +234,51 @@ model ExternalBot {
   @@index([enabled])
 }
 
-// 学习资料模型（v2.5 优化）
+// v2.6: 学习资料文件夹模型
+model MaterialFolder {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  parentId    String?  // 支持嵌套文件夹
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parent    MaterialFolder?    @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children  MaterialFolder[]   @relation("FolderHierarchy")
+  materials LearningMaterial[]
+
+  @@unique([userId, name, parentId])
+  @@index([userId, parentId])
+  @@index([userId, order])
+}
+
+// 学习资料模型（v2.6 优化：新增 folderId）
 model LearningMaterial {
   id              String   @id @default(cuid())
   userId          String
-  type            String   // 'daily_lesson' | 'user_note' | 'ai_summary' | 'custom'
+  type            String   // 'daily_lesson' | 'user_note' | 'ai_summary' | 'custom' | 'imported'
   title           String
   contentMarkdown String
   contentJson     String?  // 额外的结构化数据
-  source          String?  // 来源：'ai_generated' | 'user_created' | 'system'
+  source          String?  // 来源：'ai_generated' | 'user_created' | 'imported' | 'system'
   mapId           String?  // 关联的成长地图
   taskId          String?  // 关联的任务
   dailyPlanId     String?  // v2.5: 关联的每日计划（用于去重）
+  folderId        String?  // v2.6: 关联的自定义文件夹
   tags            String?  // JSON array of tags
   status          String   @default("active") // 'active' | 'archived'
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  folder MaterialFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+
   @@index([userId, type, createdAt])
   @@index([mapId])
   @@index([taskId])
   @@index([dailyPlanId])
+  @@index([folderId])
 }
 
 // 日报模型
@@ -319,4 +344,31 @@ model MonthlyReport {
   @@unique([userId, year, month, type])
   @@index([userId, year, month])
   @@index([mapId])
+}
+
+// RAG 知识库配置表
+model RagDataset {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String   // 知识库名称（用户自定义）
+  purpose     String   // 用途描述（会注入到 Agent 提示词）
+  datasetId   String   // Dify dataset_id (UUID)
+  apiKey      String   // Dify API Key（加密存储）
+  apiEndpoint String   @default("https://api.dify.ai/v1") // API 端点
+  enabled     Boolean  @default(true) // 是否启用
+  
+  // 检索参数配置（JSON）
+  retrievalConfig String? // {top_k, score_threshold, score_threshold_enabled}
+  
+  // 元数据
+  description String?  // 知识库描述
+  order       Int      @default(0) // 排序
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, name])
+  @@index([userId, enabled])
+  @@index([userId, order])
 }

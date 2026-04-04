@@ -6,6 +6,7 @@ import { chatDualWrite } from '@/lib/storage/chat-dual-write'
 import { streamChat } from '@/lib/ai/stream-chat'
 import { getEnv } from '@/lib/config/env-runtime'
 import { getGrowthMapContext } from '@/lib/agents/growth-map-context'
+import { buildRagDatasetsPrompt } from '@/lib/services/rag-prompt-builder'
 
 type IncomingPart = { type?: string; text?: string }
 type IncomingMessage = {
@@ -137,12 +138,17 @@ export async function POST(req: Request) {
     const { updateGrowthMapTool } = await import('@/lib/agents/tools/update-growth-map-tool')
     const { createGrowthScheduleTool } = await import('@/lib/agents/tools/create-growth-schedule-tool')
     const { researchTool } = await import('@/lib/agents/tools/research-tool')
+    const { ragRetrieveTool } = await import('@/lib/agents/tools/rag-tools')
     const { buildMentorSystemPrompt } = await import('@/lib/prompts/mentor-prompts')
+    
+    // 加载 RAG 知识库配置
+    const ragDatasetsText = await buildRagDatasetsPrompt(userId)
     
     // 使用提示词管理模块构建系统提示词
     const systemPrompt = buildMentorSystemPrompt({
       contextPack,
       growthMapContext,
+      ragDatasetsText,
     })
     
     // 使用消息流模式（增量保存）
@@ -154,12 +160,16 @@ export async function POST(req: Request) {
         update_growth_map: updateGrowthMapTool,
         create_growth_schedule: createGrowthScheduleTool,
         search_web: researchTool,
+        rag_retrieve: ragRetrieveTool(),
       },
       userId,
       sessionId: currentSessionId,
       messageId: userMessageId,
       responseHeaders: { 'X-Chat-Session-Id': currentSessionId },
       abortSignal: req.signal,
+      toolContext: {
+        userId,
+      },
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Stream failed'

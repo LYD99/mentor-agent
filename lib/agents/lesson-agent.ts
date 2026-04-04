@@ -5,6 +5,8 @@ import { getEnv } from "@/lib/config/env-runtime";
 import { withAgentRetry } from "./agent-retry";
 import { searchWeb } from "./research";
 import { buildLessonAgentPrompt } from "@/lib/prompts/agent-prompts";
+import { formatRagDatasetsForPrompt } from "@/lib/services/rag-prompt-builder";
+import { prisma } from "@/lib/db";
 
 function getOpenAIProvider() {
   const apiKey = getEnv("AI_API_KEY");
@@ -60,6 +62,7 @@ export interface LessonParams {
   includeExercises?: boolean;
   includeResearch?: boolean;
   abortSignal?: AbortSignal;
+  userId?: string; // 用于加载 RAG 配置
 }
 
 /**
@@ -130,6 +133,29 @@ export async function generateLesson(
       console.warn('[Lesson Agent] Research failed, continuing without it:', error);
     }
   }
+  
+  // 加载 RAG 知识库配置（如果提供了 userId）
+  let ragDatasetsText = '';
+  if (params.userId) {
+    try {
+      const ragDatasets = await prisma.ragDataset.findMany({
+        where: { userId: params.userId, enabled: true },
+        orderBy: { order: 'asc' },
+        select: {
+          name: true,
+          purpose: true,
+          description: true,
+        },
+      });
+      
+      if (ragDatasets.length > 0) {
+        ragDatasetsText = formatRagDatasetsForPrompt(ragDatasets);
+        console.log('[Lesson Agent] Loaded', ragDatasets.length, 'RAG datasets');
+      }
+    } catch (error) {
+      console.warn('[Lesson Agent] Failed to load RAG datasets:', error);
+    }
+  }
 
   return withAgentRetry(
     {
@@ -150,6 +176,7 @@ export async function generateLesson(
           researchSummary,
           includeExercises: params.includeExercises,
           previousError,
+          ragDatasetsText,
         });
       },
     },

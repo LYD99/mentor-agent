@@ -9,6 +9,7 @@ import { advisorTools } from '@/lib/agents/tools/advisor-tools'
 import { getEnv } from '@/lib/config/env-runtime'
 import { getGrowthMapContext } from '@/lib/agents/growth-map-context'
 import { buildAdvisorSystemPrompt } from '@/lib/prompts/advisor-prompts'
+import { buildRagDatasetsPrompt } from '@/lib/services/rag-prompt-builder'
 import { prisma } from '@/lib/db'
 
 type IncomingPart = { type?: string; text?: string }
@@ -235,7 +236,10 @@ Please use the generate_lesson tool to create comprehensive learning materials.
       }
     })
 
-  // 6. 构造 system prompt（使用统一的 prompts 模块）
+  // 6. 加载 RAG 知识库配置
+  const ragDatasetsText = await buildRagDatasetsPrompt(userId)
+  
+  // 7. 构造 system prompt（使用统一的 prompts 模块）
   const systemPrompt = buildAdvisorSystemPrompt({
     contextPack,
     growthMapContext,
@@ -243,9 +247,10 @@ Please use the generate_lesson tool to create comprehensive learning materials.
     lessonTitle,
     lessonContent,
     hasTaskId: !!effectiveTaskId,
+    ragDatasetsText,
   })
 
-  // 7. 流式调用（带 Advisor 专用工具）- 使用消息流模式
+  // 8. 流式调用（带 Advisor 专用工具）- 使用消息流模式
   try {
     return await streamChat({
       systemPrompt,

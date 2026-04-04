@@ -31,6 +31,9 @@ This ensures the user knows you're working on their request and prevents UI free
 - The user wants to find learning materials
 - You need to supplement your knowledge with recent information
 
+You also have access to the rag_retrieve tool to query external knowledge bases when configured.
+
+{{RAG_DATASETS_LIST}}
 `,
 
   // 成长地图上下文（当有地图时）
@@ -99,11 +102,18 @@ Do NOT proactively suggest or create schedules unless the user explicitly reques
 export function buildMentorSystemPrompt(params: {
   contextPack: string
   growthMapContext?: string
+  ragDatasetsText?: string
 }): string {
   let prompt = MENTOR_PROMPTS.BASE_ROLE.replace('{{contextPack}}', params.contextPack)
   
   prompt += MENTOR_PROMPTS.TOOL_USAGE_PROTOCOL
-  prompt += MENTOR_PROMPTS.SEARCH_TOOL_GUIDE
+  
+  // 注入 RAG 知识库列表
+  const searchToolGuide = MENTOR_PROMPTS.SEARCH_TOOL_GUIDE.replace(
+    '{{RAG_DATASETS_LIST}}',
+    params.ragDatasetsText || ''
+  )
+  prompt += searchToolGuide
   
   if (params.growthMapContext) {
     prompt += MENTOR_PROMPTS.GROWTH_MAP_CONTEXT.replace('{{growthMapContext}}', params.growthMapContext)
