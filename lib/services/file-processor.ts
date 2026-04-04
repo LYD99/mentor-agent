@@ -246,7 +246,8 @@ export class FileProcessor {
   ): Promise<ProcessedFile> {
     try {
       // 动态导入 pdf-parse 以避免 webpack 打包问题
-      const pdfParse = (await import('pdf-parse')).default
+      const pdfParseModule = await import('pdf-parse') as any
+      const pdfParse = pdfParseModule.default || pdfParseModule
       
       const arrayBuffer = await file.arrayBuffer()
       const buffer = Buffer.from(arrayBuffer)

@@ -18,9 +18,22 @@ Growth Map Context:
 
 `,
 
-  // 学习日期上下文
-  SCHEDULE_DATE_CONTEXT: `
-{{scheduleDateContext}}
+  // 学习日期上下文模板
+  SCHEDULE_DATE_CONTEXT_TEMPLATE: `
+📅 Target Learning Date: {{scheduleDate}}
+
+📚 Learning Tasks for This Day ({{taskCount}} tasks):
+{{tasksList}}
+
+IMPORTANT: The user wants to generate detailed learning materials for ALL {{taskCount}} tasks listed above.
+
+Instructions:
+1. For EACH task listed above, call the generate_lesson tool SEPARATELY
+2. Generate comprehensive learning materials for each task individually
+3. Make sure to generate materials for ALL {{taskCount}} tasks, not just one
+4. You can call generate_lesson multiple times in parallel if needed
+
+Please use the generate_lesson tool {{taskCount}} times to create comprehensive learning materials for each task.
 `,
 
   // 讲义内容上下文
@@ -106,6 +119,45 @@ function smartTruncate(content: string, maxChars: number): string {
 }
 
 /**
+ * 构建学习日期上下文
+ */
+export function buildScheduleDateContext(params: {
+  scheduleDate: string
+  tasks: Array<{
+    title: string
+    stage?: string
+    description?: string
+    type?: string
+    metadata?: {
+      learningObjectives?: string[]
+      suggestedDuration?: string
+      difficulty?: string
+      prerequisites?: string[]
+      focusAreas?: string[]
+    }
+  }>
+}): string {
+  const tasksList = params.tasks.map((task, i) => {
+    return `
+${i + 1}. **${task.title}**
+   - Stage: ${task.stage || 'N/A'}
+   - Description: ${task.description || 'N/A'}
+   - Type: ${task.type || 'N/A'}
+   - Learning Objectives: ${task.metadata?.learningObjectives?.join(', ') || 'N/A'}
+   - Suggested Duration: ${task.metadata?.suggestedDuration || 'N/A'}
+   - Difficulty: ${task.metadata?.difficulty || 'N/A'}
+   - Prerequisites: ${task.metadata?.prerequisites?.join(', ') || 'N/A'}
+   - Focus Areas: ${task.metadata?.focusAreas?.join(', ') || 'N/A'}
+`
+  }).join('\n')
+  
+  return ADVISOR_PROMPTS.SCHEDULE_DATE_CONTEXT_TEMPLATE
+    .replace(/{{scheduleDate}}/g, params.scheduleDate)
+    .replace(/{{taskCount}}/g, params.tasks.length.toString())
+    .replace('{{tasksList}}', tasksList)
+}
+
+/**
  * 构建完整的 Advisor Agent 系统提示词
  */
 export function buildAdvisorSystemPrompt(params: {
@@ -124,7 +176,8 @@ export function buildAdvisorSystemPrompt(params: {
   }
   
   if (params.scheduleDateContext) {
-    prompt += ADVISOR_PROMPTS.SCHEDULE_DATE_CONTEXT.replace('{{scheduleDateContext}}', params.scheduleDateContext)
+    // scheduleDateContext 已经是完整构建好的文本，直接添加即可
+    prompt += '\n' + params.scheduleDateContext + '\n'
   }
   
   if (params.lessonContent && params.lessonTitle) {

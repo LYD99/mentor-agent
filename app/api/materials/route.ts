@@ -38,18 +38,36 @@ export async function GET(req: Request) {
         whereClause.folderId = folderId
       }
 
-      // 获取 LearningMaterial 表的数据
+      // 获取 LearningMaterial 表的数据，关联 DailyPlan 获取计划日期
       const learningMaterials = await prisma.learningMaterial.findMany({
         where: whereClause,
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
       })
+      
+      // 批量查询关联的 DailyPlan
+      const dailyPlanIds = learningMaterials
+        .map(m => m.dailyPlanId)
+        .filter((id): id is string => id !== null)
+      
+      const dailyPlansMap = new Map<string, Date>()
+      if (dailyPlanIds.length > 0) {
+        const dailyPlans = await prisma.dailyPlan.findMany({
+          where: { id: { in: dailyPlanIds } },
+          select: { id: true, planDate: true },
+        })
+        dailyPlans.forEach(plan => {
+          dailyPlansMap.set(plan.id, plan.planDate)
+        })
+      }
+      
       materials.push(
         ...learningMaterials.map((m) => ({
           ...m,
           category: 'materials',
           sourceTable: 'LearningMaterial',
+          planDate: m.dailyPlanId ? dailyPlansMap.get(m.dailyPlanId)?.toISOString() : null,
         }))
       )
 

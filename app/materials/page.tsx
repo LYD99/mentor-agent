@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
@@ -20,12 +20,15 @@ import {
   FolderTree,
   ArrowLeft,
   ChevronRight,
+  X,
+  Target,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { FolderManager, type FolderNode } from '@/components/materials/folder-manager'
 import { BatchUploadDialog } from '@/components/materials/batch-upload-dialog'
+import { useSearchParams } from 'next/navigation'
 
 type MaterialCategory = 'all' | 'daily' | 'weekly' | 'monthly' | 'materials'
 type ViewMode = 'grid' | 'growth-map' | 'folder-tree'
@@ -45,11 +48,18 @@ type Material = {
   taskId?: string | null
   folderId?: string | null
   sourceTable?: 'LearningMaterial' | 'LearningLesson'
+  planDate?: string | null // 关联的学习计划日期
 }
 
 type GrowthMapInfo = {
   id: string
   title: string
+}
+
+type DailyPlanInfo = {
+  mapId: string
+  planDate: string
+  taskId: string
 }
 
 const categoryConfig = {
@@ -60,13 +70,15 @@ const categoryConfig = {
   materials: { label: '学习资料', icon: FileText, color: 'text-rose-600' },
 }
 
-export default function MaterialsPage() {
+function MaterialsPageContent() {
+  const searchParams = useSearchParams()
   const [materials, setMaterials] = useState<Material[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedCategory, setSelectedCategory] = useState<MaterialCategory>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [growthMaps, setGrowthMaps] = useState<GrowthMapInfo[]>([])
+  const [dailyPlans, setDailyPlans] = useState<DailyPlanInfo[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [deletingId, setDeletingId] = useState<string | null>(null)
   
@@ -74,11 +86,52 @@ export default function MaterialsPage() {
   const [folders, setFolders] = useState<FolderNode[]>([])
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
+  
+  // 新增：日期范围过滤状态
+  const [dateRangeFilter, setDateRangeFilter] = useState<{
+    startDate: string | null
+    endDate: string | null
+  }>({ startDate: null, endDate: null })
+  const [dateFilterType, setDateFilterType] = useState<'created' | 'plan'>('created') // 筛选类型：创建时间 or 计划时间
+  const [selectedMapIdFromUrl, setSelectedMapIdFromUrl] = useState<string | null>(null)
 
+  // 初始化：从 URL 参数读取视图模式、地图ID和日期范围
+  useEffect(() => {
+    const view = searchParams.get('view') as ViewMode | null
+    const mapId = searchParams.get('mapId')
+    const planDate = searchParams.get('planDate')
+    const startDate = searchParams.get('startDate')
+    const endDate = searchParams.get('endDate')
+    
+    if (view && ['grid', 'growth-map', 'folder-tree'].includes(view)) {
+      setViewMode(view)
+      setSelectedCategory('materials') // 自动切换到学习资料分类
+    }
+    
+    if (mapId) {
+      setSelectedMapIdFromUrl(mapId)
+      setExpandedFolders(new Set([mapId])) // 自动展开对应的成长地图
+    }
+    
+    // 如果有 planDate，转换为日期范围（当天）
+    if (planDate) {
+      setDateRangeFilter({
+        startDate: planDate,
+        endDate: planDate,
+      })
+    } else if (startDate || endDate) {
+      setDateRangeFilter({
+        startDate: startDate || null,
+        endDate: endDate || null,
+      })
+    }
+  }, [searchParams])
+  
   useEffect(() => {
     loadMaterials()
     loadGrowthMaps()
     loadFolders()
+    loadDailyPlans()
   }, [selectedCategory, selectedFolderId, viewMode])
   
   // 切换视图模式时，如果不是文件夹视图，清除文件夹选择
@@ -143,6 +196,20 @@ export default function MaterialsPage() {
       }
     } catch (err) {
       console.error('Failed to load growth maps:', err)
+    }
+  }
+
+  const loadDailyPlans = async () => {
+    try {
+      const res = await fetch('/api/daily-plans', {
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setDailyPlans(data.plans || [])
+      }
+    } catch (err) {
+      console.error('Failed to load daily plans:', err)
     }
   }
 
@@ -246,15 +313,19 @@ export default function MaterialsPage() {
   }
 
   const getDateDisplay = (material: Material) => {
+    // 日报 - 显示报告日期
     if (material.reportDate) {
       return new Date(material.reportDate).toLocaleDateString('zh-CN')
     }
+    // 周报 - 显示起始日期
     if (material.weekStartDate) {
       return `${new Date(material.weekStartDate).toLocaleDateString('zh-CN')} 起`
     }
+    // 月报 - 显示年月
     if (material.year && material.month) {
       return `${material.year}年${material.month}月`
     }
+    // 默认显示创建时间（相对时间）
     return formatDistanceToNow(new Date(material.createdAt), {
       addSuffix: true,
       locale: zhCN,
@@ -576,11 +647,237 @@ export default function MaterialsPage() {
         ) : viewMode === 'growth-map' && selectedCategory === 'materials' ? (
           // Growth Map View - Group by Growth Map
           <div className="space-y-4">
+            {/* 日期范围过滤器 */}
+            <div className="rounded-lg border border-border bg-card p-4">
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3">
+                    <Calendar className="h-5 w-5 text-primary" />
+                    <h3 className="font-semibold">按日期范围筛选</h3>
+                    
+                    {/* 筛选类型切换 */}
+                    <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/50 p-0.5">
+                      <button
+                        onClick={() => setDateFilterType('created')}
+                        className={cn(
+                          'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                          dateFilterType === 'created'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        创建时间
+                      </button>
+                      <button
+                        onClick={() => setDateFilterType('plan')}
+                        className={cn(
+                          'px-3 py-1 text-xs font-medium rounded-md transition-all',
+                          dateFilterType === 'plan'
+                            ? 'bg-background text-foreground shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        计划时间
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* 快捷日期选择 */}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const today = new Date().toISOString().split('T')[0]
+                        const newFilter = { startDate: today, endDate: today }
+                        setDateRangeFilter(newFilter)
+                        
+                        const url = new URL(window.location.href)
+                        url.searchParams.set('startDate', today)
+                        url.searchParams.set('endDate', today)
+                        url.searchParams.delete('planDate')
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                      className="text-xs"
+                    >
+                      今天
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const today = new Date()
+                        const sevenDaysAgo = new Date(today)
+                        sevenDaysAgo.setDate(today.getDate() - 7)
+                        
+                        const start = sevenDaysAgo.toISOString().split('T')[0]
+                        const end = today.toISOString().split('T')[0]
+                        const newFilter = { startDate: start, endDate: end }
+                        setDateRangeFilter(newFilter)
+                        
+                        const url = new URL(window.location.href)
+                        url.searchParams.set('startDate', start)
+                        url.searchParams.set('endDate', end)
+                        url.searchParams.delete('planDate')
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                      className="text-xs"
+                    >
+                      最近7天
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const today = new Date()
+                        const thirtyDaysAgo = new Date(today)
+                        thirtyDaysAgo.setDate(today.getDate() - 30)
+                        
+                        const start = thirtyDaysAgo.toISOString().split('T')[0]
+                        const end = today.toISOString().split('T')[0]
+                        const newFilter = { startDate: start, endDate: end }
+                        setDateRangeFilter(newFilter)
+                        
+                        const url = new URL(window.location.href)
+                        url.searchParams.set('startDate', start)
+                        url.searchParams.set('endDate', end)
+                        url.searchParams.delete('planDate')
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                      className="text-xs"
+                    >
+                      最近30天
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="flex items-end gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="text-sm font-medium mb-1.5 block text-muted-foreground">
+                      开始日期
+                    </label>
+                    <Input
+                      type="date"
+                      value={dateRangeFilter.startDate || ''}
+                      onChange={(e) => {
+                        const newFilter = {
+                          ...dateRangeFilter,
+                          startDate: e.target.value || null,
+                        }
+                        setDateRangeFilter(newFilter)
+                        
+                        // 更新 URL 参数
+                        const url = new URL(window.location.href)
+                        if (e.target.value) {
+                          url.searchParams.set('startDate', e.target.value)
+                        } else {
+                          url.searchParams.delete('startDate')
+                        }
+                        url.searchParams.delete('planDate')
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                      className="h-9"
+                    />
+                  </div>
+                  
+                  <div className="flex-1 min-w-[180px]">
+                    <label className="text-sm font-medium mb-1.5 block text-muted-foreground">
+                      结束日期
+                    </label>
+                    <Input
+                      type="date"
+                      value={dateRangeFilter.endDate || ''}
+                      onChange={(e) => {
+                        const newFilter = {
+                          ...dateRangeFilter,
+                          endDate: e.target.value || null,
+                        }
+                        setDateRangeFilter(newFilter)
+                        
+                        // 更新 URL 参数
+                        const url = new URL(window.location.href)
+                        if (e.target.value) {
+                          url.searchParams.set('endDate', e.target.value)
+                        } else {
+                          url.searchParams.delete('endDate')
+                        }
+                        url.searchParams.delete('planDate')
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                      min={dateRangeFilter.startDate || undefined}
+                      className="h-9"
+                    />
+                  </div>
+                  
+                  {(dateRangeFilter.startDate || dateRangeFilter.endDate) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setDateRangeFilter({ startDate: null, endDate: null })
+                        
+                        // 清除 URL 参数
+                        const url = new URL(window.location.href)
+                        url.searchParams.delete('startDate')
+                        url.searchParams.delete('endDate')
+                        url.searchParams.delete('planDate')
+                        window.history.replaceState({}, '', url.toString())
+                      }}
+                      className="h-9 gap-2"
+                    >
+                      <X className="h-4 w-4" />
+                      清除
+                    </Button>
+                  )}
+                </div>
+                
+                {(dateRangeFilter.startDate || dateRangeFilter.endDate) && (
+                  <div className="text-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      {dateFilterType === 'created' ? '按创建时间' : '按计划时间'}：
+                    </span>
+                    {' '}
+                    {dateRangeFilter.startDate && dateRangeFilter.endDate ? (
+                      <span>显示 {new Date(dateRangeFilter.startDate).toLocaleDateString('zh-CN')} 至 {new Date(dateRangeFilter.endDate).toLocaleDateString('zh-CN')} 的学习资料</span>
+                    ) : dateRangeFilter.startDate ? (
+                      <span>显示 {new Date(dateRangeFilter.startDate).toLocaleDateString('zh-CN')} 之后的学习资料</span>
+                    ) : (
+                      <span>显示 {new Date(dateRangeFilter.endDate!).toLocaleDateString('zh-CN')} 之前的学习资料</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            
             {/* Materials with Growth Map */}
             {growthMaps.map((map) => {
-              const mapMaterials = filteredMaterials.filter(
+              // 根据日期范围过滤资料
+              let mapMaterials = filteredMaterials.filter(
                 (m) => m.mapId === map.id && m.category === 'materials'
               )
+              
+              // 如果有日期范围过滤，根据选择的类型筛选
+              if (dateRangeFilter.startDate || dateRangeFilter.endDate) {
+                mapMaterials = mapMaterials.filter(m => {
+                  // 根据筛选类型选择日期字段
+                  const dateToCompare = dateFilterType === 'plan' && m.planDate
+                    ? m.planDate.split('T')[0]
+                    : new Date(m.createdAt).toISOString().split('T')[0]
+                  
+                  const start = dateRangeFilter.startDate
+                  const end = dateRangeFilter.endDate
+                  
+                  if (start && end) {
+                    return dateToCompare >= start && dateToCompare <= end
+                  } else if (start) {
+                    return dateToCompare >= start
+                  } else if (end) {
+                    return dateToCompare <= end
+                  }
+                  return true
+                })
+              }
+              
               if (mapMaterials.length === 0) return null
 
               const isExpanded = expandedFolders.has(map.id)
@@ -646,9 +943,17 @@ export default function MaterialsPage() {
                                   {material.contentMarkdown.slice(0, 100)}...
                                 </p>
 
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <Calendar className="h-3 w-3" />
-                                  {getDateDisplay(material)}
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <Calendar className="h-3 w-3" />
+                                    {getDateDisplay(material)}
+                                  </div>
+                                  {material.planDate && (
+                                    <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 text-emerald-700 border border-emerald-200/60 shadow-sm whitespace-nowrap hover:shadow-md transition-shadow">
+                                      <Target className="h-3.5 w-3.5" />
+                                      {new Date(material.planDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }).replace('/', '月') + '日'}
+                                    </span>
+                                  )}
                                 </div>
                               </Link>
                               <button
@@ -673,9 +978,32 @@ export default function MaterialsPage() {
             {/* Materials without Growth Map and Folder */}
             {(() => {
               // 只显示既没有 mapId 也没有 folderId 的资料
-              const unmappedMaterials = filteredMaterials.filter(
+              let unmappedMaterials = filteredMaterials.filter(
                 (m) => !m.mapId && !m.folderId && m.category === 'materials'
               )
+              
+              // 应用日期范围过滤
+              if (dateRangeFilter.startDate || dateRangeFilter.endDate) {
+                unmappedMaterials = unmappedMaterials.filter(m => {
+                  // 根据筛选类型选择日期字段
+                  const dateToCompare = dateFilterType === 'plan' && m.planDate
+                    ? m.planDate.split('T')[0]
+                    : new Date(m.createdAt).toISOString().split('T')[0]
+                  
+                  const start = dateRangeFilter.startDate
+                  const end = dateRangeFilter.endDate
+                  
+                  if (start && end) {
+                    return dateToCompare >= start && dateToCompare <= end
+                  } else if (start) {
+                    return dateToCompare >= start
+                  } else if (end) {
+                    return dateToCompare <= end
+                  }
+                  return true
+                })
+              }
+              
               if (unmappedMaterials.length === 0) return null
 
               const isExpanded = expandedFolders.has('no-map')
@@ -741,9 +1069,17 @@ export default function MaterialsPage() {
                                   {material.contentMarkdown.slice(0, 100)}...
                                 </p>
 
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <Calendar className="h-3 w-3" />
-                                  {getDateDisplay(material)}
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <Calendar className="h-3 w-3" />
+                                    {getDateDisplay(material)}
+                                  </div>
+                                  {material.planDate && (
+                                    <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 text-emerald-700 border border-emerald-200/60 shadow-sm whitespace-nowrap hover:shadow-md transition-shadow">
+                                      <Target className="h-3.5 w-3.5" />
+                                      {new Date(material.planDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }).replace('/', '月') + '日'}
+                                    </span>
+                                  )}
                                 </div>
                               </Link>
                               <button
@@ -809,7 +1145,7 @@ export default function MaterialsPage() {
                       >
                         <Icon className={cn('h-5 w-5', config.color)} />
                       </div>
-                      <div className="flex flex-col gap-1">
+                      <div className="flex flex-col gap-1 items-end">
                         <span
                           className={cn(
                             'rounded-full px-2 py-1 text-xs font-medium',
@@ -841,9 +1177,17 @@ export default function MaterialsPage() {
                       {material.contentMarkdown.slice(0, 150)}...
                     </p>
 
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Calendar className="h-3 w-3" />
-                      {getDateDisplay(material)}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Calendar className="h-3 w-3" />
+                        {getDateDisplay(material)}
+                      </div>
+                      {material.planDate && (
+                        <span className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 text-emerald-700 border border-emerald-200/60 shadow-sm whitespace-nowrap hover:shadow-md transition-shadow">
+                          <Target className="h-3.5 w-3.5" />
+                          {new Date(material.planDate).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }).replace('/', '月') + '日'}
+                        </span>
+                      )}
                     </div>
                   </Link>
                   {material.category === 'materials' && (
@@ -882,5 +1226,13 @@ export default function MaterialsPage() {
         />
       </div>
     </div>
+  )
+}
+
+export default function MaterialsPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">加载中...</div>}>
+      <MaterialsPageContent />
+    </Suspense>
   )
 }

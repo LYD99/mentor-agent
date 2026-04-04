@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import { Calendar, Clock, BookOpen, Edit2, Save, X, CalendarClock, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, RotateCcw, Sparkles } from 'lucide-react'
+import { useState, useMemo, useEffect } from 'react'
+import { Calendar, Clock, BookOpen, Edit2, Save, X, CalendarClock, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, RotateCcw, Sparkles, RefreshCw, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,6 +23,11 @@ interface DailyScheduleItem {
     prerequisites?: string[]
     focusAreas?: string[]
   }>
+  // 状态字段
+  status?: 'pending' | 'learning' | 'done'
+  startedAt?: string
+  completedAt?: string
+  planId?: string // DailyPlan ID，用于更新状态
 }
 
 interface SchedulePreferences {
@@ -66,6 +71,12 @@ export function LearningScheduleView({
   // 分页大小设置
   const [pageSize, setPageSize] = useState(7)
   const PAGE_SIZE_OPTIONS = [7, 14, 30, 60]
+  
+  // 学习资料状态：记录每个日期是否有学习资料
+  const [materialsStatus, setMaterialsStatus] = useState<Record<string, boolean>>({})
+  
+  // 状态更新中的日期
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null)
   
   // 根据日期范围过滤学习计划
   const filteredSchedule = useMemo(() => {
@@ -127,6 +138,42 @@ export function LearningScheduleView({
     }
   )
 
+  // 加载学习资料状态
+  useEffect(() => {
+    const loadMaterialsStatus = async () => {
+      if (!schedule?.dailySchedule) return
+      
+      try {
+        // 获取所有日期的学习资料
+        const res = await fetch(`/api/materials?type=materials&limit=100`, {
+          credentials: 'include',
+        })
+        
+        if (res.ok) {
+          const data = await res.json()
+          const materials = data.materials || []
+          
+          // 构建日期 -> 是否有资料的映射
+          const statusMap: Record<string, boolean> = {}
+          
+          schedule.dailySchedule.forEach(day => {
+            // 检查该日期是否有学习资料
+            const hasMaterials = materials.some((m: any) => 
+              m.planDate && m.planDate.split('T')[0] === day.date
+            )
+            statusMap[day.date] = hasMaterials
+          })
+          
+          setMaterialsStatus(statusMap)
+        }
+      } catch (error) {
+        console.error('Failed to load materials status:', error)
+      }
+    }
+    
+    loadMaterialsStatus()
+  }, [schedule])
+
   const handleGenerateSchedule = () => {
     // 跳转到 mentor chat，创建新会话并引用地图
     const params = new URLSearchParams({
@@ -144,6 +191,50 @@ export function LearningScheduleView({
       message: `请为 ${day.date} 的学习任务生成详细的学习资料`,
     })
     window.location.href = `/advisor?${params.toString()}`
+  }
+  
+  const handleUpdateStatus = async (day: DailyScheduleItem, newStatus: 'pending' | 'learning' | 'done') => {
+    if (!day.planId) {
+      console.error('No planId found for day:', day.date)
+      return
+    }
+    
+    setUpdatingStatus(day.date)
+    try {
+      const response = await fetch(`/api/daily-plans/${day.planId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+        credentials: 'include',
+      })
+      
+      if (response.ok) {
+        // 刷新页面数据
+        onUpdate?.()
+      } else {
+        alert('状态更新失败')
+      }
+    } catch (error) {
+      console.error('Update status error:', error)
+      alert('状态更新失败')
+    } finally {
+      setUpdatingStatus(null)
+    }
+  }
+  
+  const handleGoToStudy = async (day: DailyScheduleItem) => {
+    // 如果状态是 pending，先更新为 learning
+    if (day.status === 'pending' && day.planId) {
+      await handleUpdateStatus(day, 'learning')
+    }
+    
+    // 在新窗口打开学习资料页面
+    const params = new URLSearchParams({
+      view: 'growth-map',
+      mapId: mapId,
+      planDate: day.date,
+    })
+    window.open(`/materials?${params.toString()}`, '_blank')
   }
 
   const handleSave = async () => {
@@ -507,7 +598,15 @@ export function LearningScheduleView({
               .map((day, idx) => {
             const date = new Date(day.date)
             const isToday = new Date().toDateString() === date.toDateString()
+                  
+                  // 计算总时长（兼容新旧格式）
                   const totalMinutes = day.tasks.reduce((sum, t) => sum + (t.estimatedMinutes || 0), 0)
+                  const hasSuggestedDuration = day.tasks.some(t => t.suggestedDuration)
+                  
+                  // 如果有新格式的 suggestedDuration，收集所有时长
+                  const suggestedDurations = day.tasks
+                    .map(t => t.suggestedDuration)
+                    .filter(Boolean)
 
             return (
               <div
@@ -529,30 +628,103 @@ export function LearningScheduleView({
                       </div>
                     </div>
                     <div>
-                      <div className="font-medium">
+                      <div className="font-medium flex items-center gap-2">
                         {day.date}
                         {isToday && (
-                          <span className="ml-2 text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
+                          <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
                             今天
+                          </span>
+                        )}
+                        {/* 状态标签 */}
+                        {day.status === 'learning' && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                            学习中
+                          </span>
+                        )}
+                        {day.status === 'done' && (
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                            已完成
                           </span>
                         )}
                       </div>
                       <div className="text-sm text-muted-foreground">
-                        {day.tasks.length} 个任务 · 约 {totalMinutes} 分钟
+                        {day.tasks.length} 个任务
+                        {totalMinutes > 0 && ` · 约 ${totalMinutes} 分钟`}
+                        {totalMinutes === 0 && hasSuggestedDuration && suggestedDurations.length > 0 && (
+                          <span> · {suggestedDurations.join(', ')}</span>
+                        )}
                       </div>
                     </div>
                   </div>
                   
-                  {/* 生成学习资料按钮 */}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleGenerateLesson(day)}
-                    className="gap-2"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    生成学习资料
-                  </Button>
+                  {/* 操作按钮组 */}
+                  <div className="flex gap-2">
+                    {/* 去学习/完成学习按钮 - 只在有学习资料时显示 */}
+                    {materialsStatus[day.date] && (
+                      <>
+                        {day.status !== 'done' ? (
+                          <Button
+                            variant={day.status === 'learning' ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => handleGoToStudy(day)}
+                            disabled={updatingStatus === day.date}
+                            className="gap-2"
+                          >
+                            <BookOpen className="h-4 w-4" />
+                            {day.status === 'learning' ? '继续学习' : '去学习'}
+                          </Button>
+                        ) : null}
+                        
+                        {/* 完成学习按钮 - 只在 learning 状态显示 */}
+                        {day.status === 'learning' && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => handleUpdateStatus(day, 'done')}
+                            disabled={updatingStatus === day.date}
+                            className="gap-2 bg-green-600 hover:bg-green-700"
+                          >
+                            <Check className="h-4 w-4" />
+                            完成学习
+                          </Button>
+                        )}
+                        
+                        {/* 已完成状态 - 显示重新学习按钮 */}
+                        {day.status === 'done' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleUpdateStatus(day, 'learning')}
+                            disabled={updatingStatus === day.date}
+                            className="gap-2"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            重新学习
+                          </Button>
+                        )}
+                      </>
+                    )}
+                    
+                    {/* 生成/重新生成学习资料按钮 */}
+                    <Button
+                      variant={materialsStatus[day.date] ? "outline" : "default"}
+                      size="sm"
+                      onClick={() => handleGenerateLesson(day)}
+                      className="gap-2"
+                    >
+                      {materialsStatus[day.date] ? (
+                        <>
+                          <RefreshCw className="h-4 w-4" />
+                          重新生成
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          生成学习资料
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
@@ -599,31 +771,78 @@ export function LearningScheduleView({
                         </div>
                       )}
                       
-                      {/* 新格式：difficulty */}
-                      {task.difficulty && (
-                        <span className={`inline-block px-2 py-0.5 text-xs rounded-full mr-2 ${
-                          task.difficulty === 'beginner' ? 'bg-green-100 text-green-700' :
-                          task.difficulty === 'intermediate' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-red-100 text-red-700'
-                        }`}>
-                          {task.difficulty === 'beginner' ? '入门' :
-                           task.difficulty === 'intermediate' ? '中级' : '高级'}
-                        </span>
-                      )}
-                      
-                      {/* 旧格式：estimatedMinutes */}
-                      {task.estimatedMinutes && (
-                        <span className="text-xs text-muted-foreground">
-                          预计 {task.estimatedMinutes} 分钟
-                        </span>
-                      )}
-                      
-                      {/* 新格式：suggestedDuration */}
-                      {task.suggestedDuration && !task.estimatedMinutes && (
-                        <span className="text-xs text-muted-foreground">
-                          建议时长：{task.suggestedDuration}
-                        </span>
-                      )}
+                      {/* 底部信息行：难度、时长、时间戳 */}
+                      <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          {/* 新格式：difficulty */}
+                          {task.difficulty && (
+                            <span className={`inline-block px-2 py-0.5 text-xs rounded-full ${
+                              task.difficulty === 'beginner' ? 'bg-green-100 text-green-700' :
+                              task.difficulty === 'intermediate' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {task.difficulty === 'beginner' ? '入门' :
+                               task.difficulty === 'intermediate' ? '中级' : '高级'}
+                            </span>
+                          )}
+                          
+                          {/* 旧格式：estimatedMinutes */}
+                          {task.estimatedMinutes && (
+                            <span className="text-xs text-muted-foreground">
+                              预计 {task.estimatedMinutes} 分钟
+                            </span>
+                          )}
+                          
+                          {/* 新格式：suggestedDuration */}
+                          {task.suggestedDuration && !task.estimatedMinutes && (
+                            <span className="text-xs text-muted-foreground">
+                              建议时长：{task.suggestedDuration}
+                            </span>
+                          )}
+                        </div>
+                        
+                        {/* 时间信息 - 显示为时间范围 */}
+                        {day.startedAt && day.completedAt && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200/50 text-xs">
+                            <Clock className="h-3.5 w-3.5 text-blue-600" />
+                            <span className="font-medium text-muted-foreground">用时:</span>
+                            <span className="text-blue-600 font-medium">
+                              {new Date(day.startedAt).toLocaleString('zh-CN', { 
+                                year: 'numeric',
+                                month: '2-digit', 
+                                day: '2-digit', 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              }).replace(/\//g, '/')}
+                            </span>
+                            <span className="text-muted-foreground">~</span>
+                            <span className="text-green-600 font-medium">
+                              {new Date(day.completedAt).toLocaleString('zh-CN', { 
+                                year: 'numeric',
+                                month: '2-digit', 
+                                day: '2-digit', 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              }).replace(/\//g, '/')}
+                            </span>
+                          </div>
+                        )}
+                        {day.startedAt && !day.completedAt && (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200/50 text-xs">
+                            <Clock className="h-3.5 w-3.5 text-blue-600" />
+                            <span className="font-medium text-muted-foreground">开始:</span>
+                            <span className="text-blue-600 font-medium">
+                              {new Date(day.startedAt).toLocaleString('zh-CN', { 
+                                year: 'numeric',
+                                month: '2-digit', 
+                                day: '2-digit', 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              }).replace(/\//g, '/')}
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

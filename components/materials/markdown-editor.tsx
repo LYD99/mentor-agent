@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Upload, Image as ImageIcon, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Upload, Image as ImageIcon, Eye, EyeOff, Loader2, ChevronDown, ChevronRight, Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -38,6 +38,12 @@ export function MarkdownEditor({
   
   // 存储图片数据（imageId -> URL）
   const [imageMap, setImageMap] = useState<Record<string, string>>(initialImages)
+  
+  // 代码块折叠状态
+  const [collapsedCodeBlocks, setCollapsedCodeBlocks] = useState<Record<string, boolean>>({})
+  
+  // 代码复制状态
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
 
   // 当 initialImages 变化时，更新 imageMap
   useEffect(() => {
@@ -205,6 +211,19 @@ export function MarkdownEditor({
   )
 
   /**
+   * 复制代码到剪贴板
+   */
+  const handleCopyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopiedCode(code)
+      setTimeout(() => setCopiedCode(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy code:', err)
+    }
+  }
+
+  /**
    * 渲染预览（将占位符 ID 替换为实际的 base64 数据）
    */
   const renderPreview = () => {
@@ -247,26 +266,72 @@ export function MarkdownEditor({
               const language = match ? match[1] : ''
               
               if (!inline && language) {
+                // 生成唯一的代码块 ID
+                const codeId = `${language}_${codeString.substring(0, 50)}`
+                const isCollapsed = collapsedCodeBlocks[codeId] || false
+                
                 return (
                   <div className="relative group my-4">
                     <div className="flex items-center justify-between bg-zinc-800 text-zinc-100 px-4 py-2 rounded-t-lg border border-zinc-700">
-                      <span className="text-xs font-medium uppercase">{language}</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setCollapsedCodeBlocks(prev => ({
+                              ...prev,
+                              [codeId]: !isCollapsed
+                            }))
+                          }}
+                          className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-zinc-700 transition-colors"
+                          title={isCollapsed ? "展开代码" : "折叠代码"}
+                        >
+                          {isCollapsed ? (
+                            <ChevronRight className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          )}
+                        </button>
+                        <span className="text-xs font-medium uppercase">{language}</span>
+                        {isCollapsed && (
+                          <span className="text-xs text-zinc-400">
+                            ({codeString.split('\n').length} 行)
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => handleCopyCode(codeString)}
+                        className="flex items-center gap-1.5 px-2 py-1 text-xs rounded hover:bg-zinc-700 transition-colors"
+                        title="复制代码"
+                      >
+                        {copiedCode === codeString ? (
+                          <>
+                            <Check className="h-3 w-3" />
+                            已复制
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3 w-3" />
+                            复制
+                          </>
+                        )}
+                      </button>
                     </div>
-                    <SyntaxHighlighter
-                      style={vscDarkPlus}
-                      language={language}
-                      PreTag="div"
-                      className="!mt-0 !rounded-t-none !rounded-b-lg !border !border-t-0 !border-zinc-700"
-                      customStyle={{
-                        margin: 0,
-                        padding: '1rem',
-                        fontSize: '0.875rem',
-                        lineHeight: '1.5',
-                      }}
-                      {...props}
-                    >
-                      {codeString}
-                    </SyntaxHighlighter>
+                    {!isCollapsed && (
+                      <SyntaxHighlighter
+                        style={vscDarkPlus}
+                        language={language}
+                        PreTag="div"
+                        className="!mt-0 !rounded-t-none !rounded-b-lg !border !border-t-0 !border-zinc-700"
+                        customStyle={{
+                          margin: 0,
+                          padding: '1rem',
+                          fontSize: '0.875rem',
+                          lineHeight: '1.5',
+                        }}
+                        {...props}
+                      >
+                        {codeString}
+                      </SyntaxHighlighter>
+                    )}
                   </div>
                 )
               } else {

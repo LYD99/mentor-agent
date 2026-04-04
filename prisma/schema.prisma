@@ -157,12 +157,16 @@ model DailyPlan {
   taskId    String
   planDate  DateTime // 计划日期
   metadata  String?  // JSON: learningObjectives, difficulty, suggestedDuration, etc.
+  status    String   @default("pending") // pending, learning, done
+  startedAt DateTime? // 开始学习时间
+  completedAt DateTime? // 完成学习时间
   createdAt DateTime @default(now())
 
   @@unique([mapId, taskId, planDate])
   @@index([mapId, planDate])
   @@index([taskId])
   @@index([planDate])
+  @@index([status])
 }
 
 // v2.5: ScheduledTask 不再关联 GrowthMap（弱关联）

@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
-import { ArrowLeft, Loader2, Home, Trash2, MessageCircleQuestion, Copy, Check, ZoomIn, X, Edit, Save } from 'lucide-react'
+import { ArrowLeft, Loader2, Home, Trash2, MessageCircleQuestion, Copy, Check, ZoomIn, X, Edit, Save, ChevronDown, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MarkdownEditor } from '@/components/materials/markdown-editor'
@@ -53,6 +53,9 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
   
   // 图片数据映射（从 metadata 中解析）
   const [imageMap, setImageMap] = useState<Record<string, string>>({})
+  
+  // 代码块折叠状态(codeString -> boolean)
+  const [collapsedCodeBlocks, setCollapsedCodeBlocks] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     params.then(p => {
@@ -537,11 +540,38 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
                   const language = match ? match[1] : ''
                   
                   if (!inline && language) {
+                    // 生成唯一的代码块 ID
+                    const codeId = `${language}_${codeString.substring(0, 50)}`
+                    const isCollapsed = collapsedCodeBlocks[codeId] || false
+                    
                     // 代码块
                     return (
                       <div className="relative group my-4">
                         <div className="flex items-center justify-between bg-zinc-800 text-zinc-100 px-4 py-2 rounded-t-lg border border-zinc-700">
-                          <span className="text-xs font-medium uppercase">{language}</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                setCollapsedCodeBlocks(prev => ({
+                                  ...prev,
+                                  [codeId]: !isCollapsed
+                                }))
+                              }}
+                              className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-zinc-700 transition-colors"
+                              title={isCollapsed ? "展开代码" : "折叠代码"}
+                            >
+                              {isCollapsed ? (
+                                <ChevronRight className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )}
+                            </button>
+                            <span className="text-xs font-medium uppercase">{language}</span>
+                            {isCollapsed && (
+                              <span className="text-xs text-zinc-400">
+                                ({codeString.split('\n').length} 行)
+                              </span>
+                            )}
+                          </div>
                           <button
                             onClick={() => handleCopyCode(codeString)}
                             className="flex items-center gap-1.5 px-2 py-1 text-xs rounded hover:bg-zinc-700 transition-colors"
@@ -560,21 +590,23 @@ export default function MaterialDetailPage({ params }: { params: Promise<{ id: s
                             )}
                           </button>
                         </div>
-                        <SyntaxHighlighter
-                          style={vscDarkPlus}
-                          language={language}
-                          PreTag="div"
-                          className="!mt-0 !rounded-t-none !rounded-b-lg !border !border-t-0 !border-zinc-700"
-                          customStyle={{
-                            margin: 0,
-                            padding: '1rem',
-                            fontSize: '0.875rem',
-                            lineHeight: '1.5',
-                          }}
-                          {...props}
-                        >
-                          {codeString}
-                        </SyntaxHighlighter>
+                        {!isCollapsed && (
+                          <SyntaxHighlighter
+                            style={vscDarkPlus}
+                            language={language}
+                            PreTag="div"
+                            className="!mt-0 !rounded-t-none !rounded-b-lg !border !border-t-0 !border-zinc-700"
+                            customStyle={{
+                              margin: 0,
+                              padding: '1rem',
+                              fontSize: '0.875rem',
+                              lineHeight: '1.5',
+                            }}
+                            {...props}
+                          >
+                            {codeString}
+                          </SyntaxHighlighter>
+                        )}
                       </div>
                     )
                   } else {
