@@ -113,12 +113,13 @@ function MaterialsPageContent() {
       setExpandedFolders(new Set([mapId])) // 自动展开对应的成长地图
     }
     
-    // 如果有 planDate，转换为日期范围（当天）
+    // 如果有 planDate，转换为日期范围（当天）并设置为计划时间筛选
     if (planDate) {
       setDateRangeFilter({
         startDate: planDate,
         endDate: planDate,
       })
+      setDateFilterType('plan') // 自动切换到计划时间筛选
     } else if (startDate || endDate) {
       setDateRangeFilter({
         startDate: startDate || null,

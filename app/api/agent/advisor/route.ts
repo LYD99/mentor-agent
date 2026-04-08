@@ -1,7 +1,6 @@
 import { auth } from '@/lib/auth'
 import { buildContextPack } from '@/lib/agents/context-pack'
 import { getOrCreateDevUserId } from '@/lib/dev-user'
-import { ensureUserExists } from '@/lib/ensure-user'
 import { chatDualWrite } from '@/lib/storage/chat-dual-write'
 import { streamChat } from '@/lib/ai/stream-chat'
 import { getLessonContent } from '@/lib/agents/lesson-generator'
@@ -58,16 +57,6 @@ export async function POST(req: Request) {
   
   if (!userId) {
     return new Response('Unauthorized', { status: 401 })
-  }
-  
-  // 确保用户在数据库中存在（处理 OAuth 认证的情况）
-  if (session?.user) {
-    userId = await ensureUserExists({
-      id: userId,
-      email: session.user.email,
-      name: session.user.name,
-      image: session.user.image,
-    })
   }
 
   const body = (await req.json()) as {
