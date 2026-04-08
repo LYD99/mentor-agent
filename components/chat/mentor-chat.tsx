@@ -684,8 +684,8 @@ export function MentorChat() {
                                     } as any]}
                                   />
                                   
-                                  {/* 如果是 create_growth_map 且有结果，渲染成长地图 */}
-                                  {part.toolName === 'create_growth_map' && 
+                                  {/* 如果是 create_growth_map 或 update_growth_map 且有结果，渲染成长地图 */}
+                                  {(part.toolName === 'create_growth_map' || part.toolName === 'update_growth_map') && 
                                    part.state === 'result' && 
                                    part.result?.success && 
                                    part.result?.mapId && (() => {
