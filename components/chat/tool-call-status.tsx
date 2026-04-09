@@ -43,6 +43,7 @@ interface ToolInvocation {
 
 const toolIcons: Record<string, any> = {
   create_growth_map: Map,
+  update_growth_map: Map,
   create_growth_schedule: Calendar,
   search_web: Search,
   generate_lesson: BookOpen,
@@ -51,6 +52,7 @@ const toolIcons: Record<string, any> = {
 
 const toolLabels: Record<string, string> = {
   create_growth_map: '生成学习地图',
+  update_growth_map: '更新学习地图',
   create_growth_schedule: '生成学习计划',
   search_web: '搜索学习资源',
   generate_lesson: '生成学习资料',

@@ -56,6 +56,12 @@ ${tasks.map((t, i) => `${i + 1}. Task ID: "${t.id}" (STRING) - [${t.type}] ${t.t
 
 Generate a daily schedule for ${batchDays} days starting from ${startDate}.
 
+IMPORTANT: Each day can have ONE OR MORE tasks. You should decide based on:
+- Task complexity and estimated duration
+- Learning efficiency (avoid overwhelming the learner)
+- Natural grouping of related topics
+- Recommended: 1-3 tasks per day for balanced learning
+
 REQUIREMENTS for each day's metadata:
 1. taskId: Use the EXACT Task ID from the list above (STRING type, e.g., "cm123abc")
 2. taskTitle: Copy the exact task title
@@ -70,11 +76,13 @@ CRITICAL RULES:
 - Generate METADATA ONLY - keep objectives and focus areas concise (not detailed content)
 - ALL required fields must be present for every task
 - Only use Task IDs from the list above
-- Distribute the ${batchDays} days across the ${tasks.length} tasks in this stage
+- Each day's "tasks" field is an ARRAY - you can include multiple tasks if appropriate
+- Distribute the ${batchDays} days across the ${tasks.length} tasks intelligently
+- Consider combining related/short tasks on the same day
 - Return ONLY valid JSON matching the schema
 - Do not include markdown code blocks or formatting
 
-Focus on creating a logical learning progression with appropriate difficulty levels.`
+Focus on creating a logical learning progression with appropriate difficulty levels and realistic daily workload.`
 }
 
 /**

@@ -1,14 +1,14 @@
 import { auth } from '@/lib/auth'
 import { buildContextPack } from '@/lib/agents/context-pack'
 import { getOrCreateDevUserId } from '@/lib/dev-user'
-import { ensureUserExists } from '@/lib/ensure-user'
 import { chatDualWrite } from '@/lib/storage/chat-dual-write'
 import { streamChat } from '@/lib/ai/stream-chat'
 import { getLessonContent } from '@/lib/agents/lesson-generator'
 import { advisorTools } from '@/lib/agents/tools/advisor-tools'
 import { getEnv } from '@/lib/config/env-runtime'
 import { getGrowthMapContext } from '@/lib/agents/growth-map-context'
-import { buildAdvisorSystemPrompt } from '@/lib/prompts/advisor-prompts'
+import { buildAdvisorSystemPrompt, buildScheduleDateContext } from '@/lib/prompts/advisor-prompts'
+import { buildRagDatasetsPrompt } from '@/lib/services/rag-prompt-builder'
 import { prisma } from '@/lib/db'
 
 type IncomingPart = { type?: string; text?: string }
@@ -57,16 +57,6 @@ export async function POST(req: Request) {
   
   if (!userId) {
     return new Response('Unauthorized', { status: 401 })
-  }
-  
-  // 确保用户在数据库中存在（处理 OAuth 认证的情况）
-  if (session?.user) {
-    userId = await ensureUserExists({
-      id: userId,
-      email: session.user.email,
-      name: session.user.name,
-      image: session.user.image,
-    })
   }
 
   const body = (await req.json()) as {
@@ -157,6 +147,9 @@ export async function POST(req: Request) {
   // 4.1 如果有关联的成长地图，加载地图内容
   let growthMapContext = ''
   let scheduleDateContext = ''
+  let dailyPlanIds: string[] = []
+  let taskIds: string[] = []
+  
   if (growthMapId) {
     try {
       growthMapContext = await getGrowthMapContext(growthMapId)
@@ -176,9 +169,12 @@ export async function POST(req: Request) {
           },
         })
         
+        // 提取 dailyPlanIds 和 taskIds
+        dailyPlanIds = dailyPlans.map(p => p.id)
+        taskIds = dailyPlans.map(p => p.taskId)
+        
         if (dailyPlans.length > 0) {
           // 查询所有关联的 LearningTask
-          const taskIds = dailyPlans.map(p => p.taskId)
           const tasks = await prisma.learningTask.findMany({
             where: { id: { in: taskIds } },
             include: {
@@ -193,30 +189,28 @@ export async function POST(req: Request) {
           
           const taskMap = new Map(tasks.map(t => [t.id, t]))
           
-          scheduleDateContext = `
-📅 Target Learning Date: ${scheduleDate}
-
-📚 Learning Tasks for This Day (${dailyPlans.length} tasks):
-${dailyPlans.map((plan, i) => {
-  const metadata = plan.metadata ? JSON.parse(plan.metadata) : {}
-  const task = taskMap.get(plan.taskId)
-  
-  return `
-${i + 1}. **${task?.title || 'Unknown Task'}**
-   - Stage: ${task?.stage?.title || 'N/A'}
-   - Description: ${task?.description || 'N/A'}
-   - Type: ${task?.type || 'N/A'}
-   - Learning Objectives: ${metadata.learningObjectives?.join(', ') || 'N/A'}
-   - Suggested Duration: ${metadata.suggestedDuration || (task?.durationDays ? `${task.durationDays} days` : 'N/A')}
-   - Difficulty: ${metadata.difficulty || 'N/A'}
-   - Prerequisites: ${metadata.prerequisites?.join(', ') || 'N/A'}
-   - Focus Areas: ${metadata.focusAreas?.join(', ') || 'N/A'}
-`
-}).join('\n')}
-
-The user wants to generate detailed learning materials for the above tasks.
-Please use the generate_lesson tool to create comprehensive learning materials.
-`
+          // 使用统一的提示词构建函数
+          scheduleDateContext = buildScheduleDateContext({
+            scheduleDate,
+            tasks: dailyPlans.map(plan => {
+              const metadata = plan.metadata ? JSON.parse(plan.metadata) : {}
+              const task = taskMap.get(plan.taskId)
+              
+              return {
+                title: task?.title || 'Unknown Task',
+                stage: task?.stage?.title,
+                description: task?.description || undefined,
+                type: task?.type,
+                metadata: {
+                  learningObjectives: metadata.learningObjectives,
+                  suggestedDuration: metadata.suggestedDuration || (task?.durationDays ? `${task.durationDays} days` : undefined),
+                  difficulty: metadata.difficulty,
+                  prerequisites: metadata.prerequisites,
+                  focusAreas: metadata.focusAreas,
+                }
+              }
+            })
+          })
         }
       }
     } catch (error) {
@@ -235,7 +229,10 @@ Please use the generate_lesson tool to create comprehensive learning materials.
       }
     })
 
-  // 6. 构造 system prompt（使用统一的 prompts 模块）
+  // 6. 加载 RAG 知识库配置
+  const ragDatasetsText = await buildRagDatasetsPrompt(userId)
+  
+  // 7. 构造 system prompt（使用统一的 prompts 模块）
   const systemPrompt = buildAdvisorSystemPrompt({
     contextPack,
     growthMapContext,
@@ -243,9 +240,10 @@ Please use the generate_lesson tool to create comprehensive learning materials.
     lessonTitle,
     lessonContent,
     hasTaskId: !!effectiveTaskId,
+    ragDatasetsText,
   })
 
-  // 7. 流式调用（带 Advisor 专用工具）- 使用消息流模式
+  // 8. 流式调用（带 Advisor 专用工具）- 使用消息流模式
   try {
     return await streamChat({
       systemPrompt,
@@ -260,6 +258,8 @@ Please use the generate_lesson tool to create comprehensive learning materials.
         userId,
         mapId: growthMapId,
         scheduleDate: scheduleDate,
+        taskIds: taskIds.length > 0 ? taskIds : undefined,
+        dailyPlanIds: dailyPlanIds.length > 0 ? dailyPlanIds : undefined,
       },
     })
   } catch (e) {

@@ -67,7 +67,23 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
             dayOfWeek: new Date(plan.planDate).getDay(),
             tasks: [],
             createdAt: plan.createdAt,
+            // 状态信息：取该日期所有任务中最"进展"的状态
+            status: plan.status || 'pending',
+            startedAt: plan.startedAt?.toISOString(),
+            completedAt: plan.completedAt?.toISOString(),
+            planId: plan.id, // 用于更新状态
           }
+        }
+        
+        // 更新日期的状态（取最进展的状态）
+        const statusPriority = { pending: 0, learning: 1, done: 2 }
+        const currentPriority = statusPriority[acc[dateKey].status as keyof typeof statusPriority] || 0
+        const newPriority = statusPriority[plan.status as keyof typeof statusPriority] || 0
+        if (newPriority > currentPriority) {
+          acc[dateKey].status = plan.status
+          acc[dateKey].startedAt = plan.startedAt?.toISOString()
+          acc[dateKey].completedAt = plan.completedAt?.toISOString()
+          acc[dateKey].planId = plan.id
         }
         
         const metadata = plan.metadata ? JSON.parse(plan.metadata) : {}
@@ -95,6 +111,10 @@ export default async function PlanPage({ params }: { params: Promise<{ id: strin
       date: day.date,
       dayOfWeek: day.dayOfWeek,
       tasks: day.tasks,
+      status: day.status,
+      startedAt: day.startedAt,
+      completedAt: day.completedAt,
+      planId: day.planId,
     })),
     generatedAt: dailyPlans[0]?.createdAt.toISOString() || new Date().toISOString(),
   } : null

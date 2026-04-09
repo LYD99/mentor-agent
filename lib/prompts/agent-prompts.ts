@@ -196,6 +196,7 @@ export function buildLessonAgentPrompt(params: {
   researchSummary?: string
   includeExercises?: boolean
   previousError?: string
+  ragDatasetsText?: string
 }): string {
   let prompt = AGENT_PROMPTS.LESSON_AGENT.BASE
     .replace('{{taskTitle}}', params.taskTitle)
@@ -250,6 +251,11 @@ export function buildLessonAgentPrompt(params: {
   if (params.previousError) {
     prompt += AGENT_PROMPTS.LESSON_AGENT.RETRY_HINT
       .replace('{{error}}', params.previousError)
+  }
+  
+  // 注入 RAG 知识库列表（如果有）
+  if (params.ragDatasetsText) {
+    prompt += `\n\n${params.ragDatasetsText}`
   }
   
   return prompt

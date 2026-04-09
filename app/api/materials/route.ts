@@ -21,6 +21,7 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') // 'all' | 'daily' | 'weekly' | 'monthly' | 'materials'
+  const folderId = searchParams.get('folderId') // 可选：按文件夹过滤
   const limit = parseInt(searchParams.get('limit') || '20')
   const offset = parseInt(searchParams.get('offset') || '0')
 
@@ -29,18 +30,44 @@ export async function GET(req: Request) {
 
     // 获取学习资料
     if (!type || type === 'all' || type === 'materials') {
-      // 获取 LearningMaterial 表的数据
+      // 构建查询条件
+      const whereClause: any = { userId, status: 'active' }
+      
+      // 如果指定了文件夹，添加过滤条件
+      if (folderId) {
+        whereClause.folderId = folderId
+      }
+
+      // 获取 LearningMaterial 表的数据，关联 DailyPlan 获取计划日期
       const learningMaterials = await prisma.learningMaterial.findMany({
-        where: { userId, status: 'learning' },
+        where: whereClause,
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
       })
+      
+      // 批量查询关联的 DailyPlan
+      const dailyPlanIds = learningMaterials
+        .map(m => m.dailyPlanId)
+        .filter((id): id is string => id !== null)
+      
+      const dailyPlansMap = new Map<string, Date>()
+      if (dailyPlanIds.length > 0) {
+        const dailyPlans = await prisma.dailyPlan.findMany({
+          where: { id: { in: dailyPlanIds } },
+          select: { id: true, planDate: true },
+        })
+        dailyPlans.forEach(plan => {
+          dailyPlansMap.set(plan.id, plan.planDate)
+        })
+      }
+      
       materials.push(
         ...learningMaterials.map((m) => ({
           ...m,
           category: 'materials',
           sourceTable: 'LearningMaterial',
+          planDate: m.dailyPlanId ? dailyPlansMap.get(m.dailyPlanId)?.toISOString() : null,
         }))
       )
 
@@ -133,7 +160,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json()
-    const { type, title, contentMarkdown, mapId, taskId, tags } = body
+    const { type, title, contentMarkdown, contentJson, mapId, taskId, tags } = body
 
     const material = await prisma.learningMaterial.create({
       data: {
@@ -141,6 +168,7 @@ export async function POST(req: Request) {
         type: type || 'custom',
         title,
         contentMarkdown,
+        contentJson: contentJson || null,
         source: 'user_created',
         mapId,
         taskId,

@@ -44,11 +44,19 @@ export const generateLessonTool = tool({
     knownMaterials: z.string().optional().describe('已知的学习资料或参考内容（可选）。如果你已经通过 search_web 查询了相关资料，请将查询结果传入这里，避免 Lesson Agent 内部重复查询。'),
   }),
 
-  execute: async (params, context?: { userId?: string; mapId?: string; scheduleDate?: string }) => {
+  execute: async (params, context?: { 
+    userId?: string; 
+    mapId?: string; 
+    scheduleDate?: string;
+    taskIds?: string[];
+    dailyPlanIds?: string[];
+  }) => {
     try {
       const userId = context?.userId
       const mapId = context?.mapId
       const scheduleDate = context?.scheduleDate
+      const taskIds = context?.taskIds || []
+      const dailyPlanIds = context?.dailyPlanIds || []
       
       console.log(`[Generate Lesson Tool] Generating lesson: ${params.taskTitle}`, {
         hasKnownMaterials: !!params.knownMaterials,
@@ -56,6 +64,8 @@ export const generateLessonTool = tool({
         userId,
         mapId,
         scheduleDate,
+        taskIdsCount: taskIds.length,
+        dailyPlanIdsCount: dailyPlanIds.length,
       })
       
       // 构建 metadata
@@ -85,6 +95,7 @@ export const generateLessonTool = tool({
         stageTitle: '自定义学习', // 占位符
         metadata,
         includeResearch: !params.knownMaterials, // 如果有已知资料，就不再查询
+        userId, // 传递 userId 以加载 RAG 配置
       })
 
       // 格式化为 Markdown
@@ -177,6 +188,52 @@ export const generateLessonTool = tool({
           if (metadata.difficulty) tags.push(`difficulty:${metadata.difficulty}`)
           if (mapId) tags.push(`map:${mapId}`)
 
+          // 智能匹配 taskId 和 dailyPlanId
+          // 如果有多个任务，通过标题匹配找到正确的任务
+          let taskId: string | null = null
+          let dailyPlanId: string | null = null
+          
+          if (taskIds.length > 0 && dailyPlanIds.length > 0 && mapId && scheduleDate) {
+            // 查询所有相关的任务和计划
+            const tasks = await prisma.learningTask.findMany({
+              where: { id: { in: taskIds } },
+              select: { id: true, title: true },
+            })
+            
+            const plans = await prisma.dailyPlan.findMany({
+              where: { 
+                id: { in: dailyPlanIds },
+                mapId: mapId,
+                planDate: new Date(scheduleDate),
+              },
+              select: { id: true, taskId: true },
+            })
+            
+            // 尝试通过标题匹配找到对应的任务
+            const matchedTask = tasks.find(t => 
+              params.taskTitle.includes(t.title) || t.title.includes(params.taskTitle)
+            )
+            
+            if (matchedTask) {
+              taskId = matchedTask.id
+              // 找到对应的 dailyPlan
+              const matchedPlan = plans.find(p => p.taskId === matchedTask.id)
+              if (matchedPlan) {
+                dailyPlanId = matchedPlan.id
+              }
+            } else {
+              // 如果没有匹配到，使用第一个
+              taskId = taskIds[0]
+              dailyPlanId = dailyPlanIds[0]
+            }
+          } else if (taskIds.length > 0) {
+            taskId = taskIds[0]
+          }
+          
+          if (dailyPlanIds.length > 0 && !dailyPlanId) {
+            dailyPlanId = dailyPlanIds[0]
+          }
+          
           const savedLesson = await prisma.learningMaterial.create({
             data: {
               userId,
@@ -186,8 +243,10 @@ export const generateLessonTool = tool({
               contentJson,
               source: 'ai_generated',
               mapId: mapId || null,
+              taskId: taskId,
+              dailyPlanId: dailyPlanId,
               tags: JSON.stringify(tags),
-              status: 'learning',
+              status: 'active', // 修复：使用 'active' 而不是 'learning'
             },
           })
 

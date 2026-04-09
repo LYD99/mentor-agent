@@ -5,7 +5,9 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { ConfigForm } from '@/components/settings/config-form'
 import { EnvConfigForm } from '@/components/settings/env-config-form'
-import { Home, Settings as SettingsIcon, Loader2, RefreshCw, AlertTriangle, Check } from 'lucide-react'
+import { RagDatasetList, type RagDataset } from '@/components/settings/rag-dataset-list'
+import { RagDatasetDialog } from '@/components/settings/rag-dataset-dialog'
+import { Home, Settings as SettingsIcon, Loader2, RefreshCw, AlertTriangle, Check, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ConfigDefinition } from '@/lib/config/config-service'
 import type { EnvConfigDefinition } from '@/lib/config/env-service'
@@ -21,12 +23,13 @@ type EnvConfigData = {
   actualValues: Record<string, string>
 }
 
-const mainCategories = ['app', 'env'] as const
+const mainCategories = ['app', 'env', 'rag'] as const
 type MainCategory = typeof mainCategories[number]
 
 const mainCategoryLabels: Record<MainCategory, string> = {
   app: '应用配置',
   env: '环境变量',
+  rag: 'RAG 知识库',
 }
 
 const appCategoryLabels = {
@@ -61,11 +64,23 @@ export default function SettingsPage() {
   const [activeEnvCategory, setActiveEnvCategory] = useState<string>('ai')
   const [modifiedConfigs, setModifiedConfigs] = useState<Set<string>>(new Set())
   const [reloading, setReloading] = useState(false)
+  
+  // RAG 相关状态
+  const [ragDatasets, setRagDatasets] = useState<RagDataset[]>([])
+  const [ragLoading, setRagLoading] = useState(false)
+  const [ragDialogOpen, setRagDialogOpen] = useState(false)
+  const [editingDataset, setEditingDataset] = useState<RagDataset | null>(null)
 
   useEffect(() => {
+    console.log('🔍 Settings 页面已挂载')
     loadConfigs()
     loadEnvConfigs()
+    loadRagDatasets()
   }, [])
+
+  useEffect(() => {
+    console.log('🔍 RAG Dialog 状态变化:', { ragDialogOpen, editingDataset })
+  }, [ragDialogOpen, editingDataset])
 
   const loadConfigs = async () => {
     setLoading(true)
@@ -189,6 +204,64 @@ export default function SettingsPage() {
     }
   }
 
+  // RAG 数据集管理函数
+  const loadRagDatasets = async () => {
+    setRagLoading(true)
+    try {
+      const res = await fetch('/api/rag/datasets', {
+        credentials: 'include',
+      })
+      
+      if (res.ok) {
+        const data = await res.json()
+        setRagDatasets(data.datasets || [])
+      }
+    } catch (err) {
+      console.error('Failed to load RAG datasets:', err)
+    } finally {
+      setRagLoading(false)
+    }
+  }
+
+  const handleCreateRagDataset = () => {
+    console.log('🔍 === 按钮被点击 ===')
+    console.log('🔍 当前状态:', { ragDialogOpen, editingDataset, ragDatasets: ragDatasets.length })
+    alert('测试：按钮点击成功！')
+    setEditingDataset(null)
+    setRagDialogOpen(true)
+    console.log('🔍 状态已更新（异步）')
+  }
+
+  const handleEditRagDataset = (dataset: RagDataset) => {
+    setEditingDataset(dataset)
+    setRagDialogOpen(true)
+  }
+
+  const handleDeleteRagDataset = async (id: string) => {
+    if (!confirm('确定要删除这个知识库配置吗？删除后无法恢复。')) return
+
+    try {
+      const res = await fetch(`/api/rag/datasets/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.error || '删除失败')
+      }
+
+      await loadRagDatasets()
+    } catch (err) {
+      alert(`删除失败：${err instanceof Error ? err.message : '未知错误'}`)
+    }
+  }
+
+  const handleSaveRagDataset = async () => {
+    setRagDialogOpen(false)
+    await loadRagDatasets()
+  }
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center">
@@ -259,6 +332,50 @@ export default function SettingsPage() {
             })}
           </div>
         )}
+      </>
+    )
+  }
+
+  // 渲染 RAG 配置
+  const renderRagConfigs = () => {
+    console.log('🔍 renderRagConfigs 被调用')
+    return (
+      <>
+        <div className="mb-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-bold mb-2">RAG 知识库配置</h2>
+              <p className="text-sm text-muted-foreground">
+                配置外部知识库，AI 可以从这些知识库中检索专业知识
+              </p>
+            </div>
+            <Button onClick={handleCreateRagDataset}>
+              <Plus className="mr-2 h-4 w-4" />
+              添加知识库
+            </Button>
+          </div>
+        </div>
+
+        {ragLoading ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
+            加载知识库配置中...
+          </div>
+        ) : (
+          <RagDatasetList
+            datasets={ragDatasets}
+            onEdit={handleEditRagDataset}
+            onDelete={handleDeleteRagDataset}
+            onRefresh={loadRagDatasets}
+          />
+        )}
+
+        <RagDatasetDialog
+          open={ragDialogOpen}
+          dataset={editingDataset}
+          onClose={() => setRagDialogOpen(false)}
+          onSave={handleSaveRagDataset}
+        />
       </>
     )
   }
@@ -450,7 +567,9 @@ export default function SettingsPage() {
         {/* 主内容区 */}
         <main className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-3xl">
-            {mainCategory === 'app' ? renderAppConfigs() : renderEnvConfigs()}
+            {mainCategory === 'app' && renderAppConfigs()}
+            {mainCategory === 'env' && renderEnvConfigs()}
+            {mainCategory === 'rag' && renderRagConfigs()}
           </div>
         </main>
       </div>

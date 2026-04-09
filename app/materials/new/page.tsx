@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { MarkdownEditor } from '@/components/materials/markdown-editor'
 
 export default function NewMaterialPage() {
   const router = useRouter()
@@ -24,17 +25,59 @@ export default function NewMaterialPage() {
     contentMarkdown: '',
     tags: [] as string[],
   })
+  const [imageMap, setImageMap] = useState<Record<string, string>>({})
+
+  // 从 Markdown 中提取实际使用的图片 ID
+  const extractUsedImageIds = (markdown: string): string[] => {
+    const imageRegex = /!\[.*?\]\((image_[a-z0-9_]+)\)/g
+    const matches = markdown.matchAll(imageRegex)
+    const ids: string[] = []
+    
+    for (const match of matches) {
+      ids.push(match[1])
+    }
+    
+    return ids
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
+      // 提取 Markdown 中实际使用的图片 ID
+      const usedImageIds = extractUsedImageIds(formData.contentMarkdown)
+      
+      // 只保留实际使用的图片数据
+      const cleanedImageMap: Record<string, string> = {}
+      usedImageIds.forEach(id => {
+        if (imageMap[id]) {
+          cleanedImageMap[id] = imageMap[id]
+        }
+      })
+      
+      console.log('[Material] Cleaning images:', {
+        total: Object.keys(imageMap).length,
+        used: Object.keys(cleanedImageMap).length,
+        removed: Object.keys(imageMap).length - Object.keys(cleanedImageMap).length
+      })
+      
+      // 构建 contentJson，只包含使用的图片映射
+      const contentJson = JSON.stringify({
+        metadata: {
+          images: cleanedImageMap,
+        },
+        createdAt: new Date().toISOString(),
+      })
+
       const res = await fetch('/api/materials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          contentJson,
+        }),
       })
 
       if (res.ok) {
@@ -108,22 +151,14 @@ export default function NewMaterialPage() {
             </div>
 
             {/* Content */}
-            <div className="space-y-2">
-              <Label htmlFor="content">内容 *</Label>
-              <textarea
-                id="content"
-                className="w-full min-h-[400px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                placeholder="支持 Markdown 格式..."
-                value={formData.contentMarkdown}
-                onChange={(e) =>
-                  setFormData({ ...formData, contentMarkdown: e.target.value })
-                }
-                required
-              />
-              <p className="text-xs text-muted-foreground">
-                支持 Markdown 语法，包括标题、列表、代码块等
-              </p>
-            </div>
+            <MarkdownEditor
+              value={formData.contentMarkdown}
+              onChange={(value) =>
+                setFormData({ ...formData, contentMarkdown: value })
+              }
+              onImagesChange={setImageMap}
+              disabled={loading}
+            />
 
             {/* Tags */}
             <div className="space-y-2">
