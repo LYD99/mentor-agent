@@ -887,7 +887,7 @@ export function AdvisorChat({ lessonId, taskId }: AdvisorChatProps) {
                 {isLoading ? (
                   <Button 
                     type="button" 
-                    onClick={stop}
+                    onClick={handleStop}
                     variant="destructive"
                   >
                     中断

@@ -5,6 +5,13 @@ import { getEnv } from "@/lib/config/env-runtime";
 import { prisma } from "@/lib/db";
 import { withAgentRetry } from "./agent-retry";
 import { buildBatchSchedulePrompt, buildBatchScheduleErrorPrompt } from "@/lib/prompts/schedule-prompts";
+import { selectScheduleModelConfig, getModelConfigSummary } from "@/lib/config/model-config";
+import { 
+  assessScheduleQualityComprehensive, 
+  generateQualityReport, 
+  shouldRegenerate,
+  isQualityValidationEnabled 
+} from "./quality-validator";
 
 function getOpenAIProvider() {
   const apiKey = getEnv("AI_API_KEY");
@@ -14,6 +21,43 @@ function getOpenAIProvider() {
     apiKey,
     ...(baseURL ? { baseURL } : {}),
   });
+}
+
+/**
+ * 并发控制：限制同时执行的 Promise 数量
+ * @param tasks 任务函数数组
+ * @param limit 并发限制数量
+ * @returns Promise.allSettled 的结果
+ */
+async function pLimit<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let currentIndex = 0;
+
+  async function executeNext(): Promise<void> {
+    const index = currentIndex++;
+    if (index >= tasks.length) return;
+
+    try {
+      const result = await tasks[index]();
+      results[index] = { status: 'fulfilled', value: result };
+    } catch (error) {
+      results[index] = { status: 'rejected', reason: error };
+    }
+
+    // 递归执行下一个任务
+    await executeNext();
+  }
+
+  // 启动初始的并发任务
+  const workers = Array(Math.min(limit, tasks.length))
+    .fill(null)
+    .map(() => executeNext());
+
+  await Promise.all(workers);
+  return results;
 }
 
 // 单日学习计划 Schema（元数据模式 - Scheme D）
@@ -95,7 +139,7 @@ function timeToCron(time: string): { minute: string; hour: string } {
 }
 
 /**
- * 生成成长地图的学习计划和定时任务
+ * 生成成长地图的学习计划和定时任务（内部实现，不包含质量验证）
  */
 type StageProgressCallback = (stage: {
   stageIndex: number;
@@ -104,13 +148,13 @@ type StageProgressCallback = (stage: {
   totalStages: number;
 }) => void | Promise<void>;
 
-export async function generateGrowthSchedule(params: {
+async function generateGrowthScheduleInternal(params: {
   mapId: string;
   mapContext: string;
   preferences: SchedulePreferences;
   abortSignal?: AbortSignal;
   onStageProgress?: StageProgressCallback;
-}): Promise<GrowthScheduleData> {
+}): Promise<{ dailySchedule: DailyScheduleItem[] }> {
   const apiKey = getEnv("AI_API_KEY");
   if (!apiKey?.trim()) {
     throw new Error("Missing AI_API_KEY");
@@ -240,13 +284,21 @@ export async function generateGrowthSchedule(params: {
         }
 
         const openaiProvider = getOpenAIProvider();
-        const model = openaiProvider(getEnv("AI_MODEL") || "gpt-4o-mini");
+        
+        // 选择最优模型配置
+        const modelConfig = selectScheduleModelConfig();
+        console.log(`[Schedule Agent] Using config: ${getModelConfigSummary(modelConfig)}`);
+        const model = openaiProvider(modelConfig.model);
 
-        // 并行生成所有阶段（使用 allSettled 以支持部分成功）
+        // 并行生成所有阶段（使用并发控制，限制同时执行的批次数量）
         const allDailySchedules: DailyScheduleItem[] = [];
+        
+        // 从环境变量读取并发限制，默认 5 个
+        const concurrencyLimit = parseInt(getEnv('SCHEDULE_BATCH_CONCURRENCY') || '5', 10);
+        console.log(`[Schedule Agent] Using concurrency limit: ${concurrencyLimit} batches`);
 
-        const batchResults = await Promise.allSettled(
-          stageBatches.map(async (stageBatch) => {
+        const batchResults = await pLimit(
+          stageBatches.map((stageBatch) => async () => {
             // 报告批次开始（只在第一个批次时报告阶段开始）
             if (params.onStageProgress && stageBatch.batchIndex === 0) {
               await params.onStageProgress({
@@ -292,13 +344,30 @@ export async function generateGrowthSchedule(params: {
               },
               async (prompt) => {
                 // 方案 1：直接使用 generateObject（更快、更可靠）
-                const { object } = await generateObject({
+                // 构建 generateObject 参数，只在有值时才传递（避免传递 undefined）
+                const generateParams: any = {
                   model,
                   schema: BatchScheduleSchema,
                   prompt,
-                  temperature: 0.7,
+                  temperature: modelConfig.temperature,
                   abortSignal: params.abortSignal,
-                });
+                };
+                
+                // 只在有具体值时才添加可选参数（DeepSeek 不支持某些参数）
+                if (modelConfig.maxTokens !== undefined) {
+                  generateParams.maxTokens = modelConfig.maxTokens;
+                }
+                if (modelConfig.topP !== undefined) {
+                  generateParams.topP = modelConfig.topP;
+                }
+                if (modelConfig.frequencyPenalty !== undefined) {
+                  generateParams.frequencyPenalty = modelConfig.frequencyPenalty;
+                }
+                if (modelConfig.presencePenalty !== undefined) {
+                  generateParams.presencePenalty = modelConfig.presencePenalty;
+                }
+                
+                const { object } = await generateObject(generateParams);
 
                 // 验证并返回结果（generateObject 已经保证了基本格式）
                 const validated = BatchScheduleSchema.safeParse(object);
@@ -319,6 +388,7 @@ export async function generateGrowthSchedule(params: {
 
             return result.dailySchedule;
           }),
+          concurrencyLimit
         );
 
         // 处理批次结果，按阶段分组统计
@@ -415,101 +485,263 @@ export async function generateGrowthSchedule(params: {
           `[Schedule Agent] Schedule generation completed: ${allDailySchedules.length} days from ${successfulBatches}/${stageBatches.length} batches (${stageInfo.size} stages)`,
         );
 
-        const object = { dailySchedule: allDailySchedules };
+        const duration = Date.now() - startTime;
+        console.log(`[Schedule Agent] Completed generate growth schedule successfully in ${duration}ms`);
 
-        // 生成定时任务的 cron 表达式
-        const studyTime = timeToCron(params.preferences.studyReminderTime);
-        const reportTime = timeToCron(params.preferences.reportReminderTime);
-        const summaryTime = timeToCron(params.preferences.summaryTime);
+        return { dailySchedule: allDailySchedules };
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    const isAborted = error instanceof Error && 
+      (error.message.includes("Operation aborted") || error.name === "AbortError");
+    
+    if (isAborted) {
+      console.log(`[Schedule Agent] Cancelled generate growth schedule by user after ${duration}ms`);
+    } else {
+      console.error(`[Schedule Agent] Failed generate growth schedule after ${duration}ms:`, 
+        error instanceof Error ? error.message : "Unknown error");
+    }
+    
+    throw new Error(
+      `Failed to generate growth schedule: ${error instanceof Error ? error.message : "Unknown error"}`,
+    );
+  }
+}
 
-        const scheduledTasks = [
-          {
-            taskType: "daily_study_reminder" as const,
-            cronExpression: `${studyTime.minute} ${studyTime.hour} * * *`,
-            content: {
-              title: "每日学习提醒",
-              description: `每天 ${params.preferences.studyReminderTime} 提醒学习，生成学习资料和练习题`,
-              actionType: "generate_daily_lesson",
-              params: {
-                mapId: params.mapId,
-                includeExercises: true,
-                includeAnswers: true,
-              },
-            },
-          },
-          {
-            taskType: "daily_report_reminder" as const,
-            cronExpression: `${reportTime.minute} ${reportTime.hour} * * *`,
-            content: {
-              title: "每日日报提醒",
-              description: `每天 ${params.preferences.reportReminderTime} 提醒写学习日报`,
-              actionType: "send_report_reminder",
-              params: {
-                mapId: params.mapId,
-                reportType: "daily",
-              },
-            },
-          },
-          {
-            taskType: "daily_auto_summary" as const,
-            cronExpression: `${summaryTime.minute} ${summaryTime.hour} * * *`,
-            content: {
-              title: "每日自动总结",
-              description: `每天 ${params.preferences.summaryTime} 自动总结学习进度`,
-              actionType: "generate_daily_summary",
-              params: {
-                mapId: params.mapId,
-                analyzeProgress: true,
-              },
-            },
-          },
-          {
-            taskType: "weekly_report" as const,
-            cronExpression: `0 8 * * ${params.preferences.weeklyReportDay}`,
-            content: {
-              title: "每周学习周报",
-              description: `每周${["日", "一", "二", "三", "四", "五", "六"][params.preferences.weeklyReportDay]}生成学习周报`,
-              actionType: "generate_weekly_report",
-              params: {
-                mapId: params.mapId,
-              },
-            },
-          },
-          {
-            taskType: "monthly_report" as const,
-            cronExpression: `0 8 ${params.preferences.monthlyReportDay} * *`,
-            content: {
-              title: "每月学习月报",
-              description: `每月 ${params.preferences.monthlyReportDay} 号生成学习月报`,
-              actionType: "generate_monthly_report",
-              params: {
-                mapId: params.mapId,
-              },
-            },
-          },
-        ];
+/**
+ * 生成成长地图的学习计划和定时任务（带质量验证和重试）
+ */
+export async function generateGrowthSchedule(params: {
+  mapId: string;
+  mapContext: string;
+  preferences: SchedulePreferences;
+  abortSignal?: AbortSignal;
+  onStageProgress?: StageProgressCallback;
+}): Promise<GrowthScheduleData> {
+  // 如果质量验证未启用，直接调用内部实现并添加定时任务
+  if (!isQualityValidationEnabled()) {
+    const result = await generateGrowthScheduleInternal(params);
+    
+    // 生成定时任务的 cron 表达式
+    const studyTime = timeToCron(params.preferences.studyReminderTime);
+    const reportTime = timeToCron(params.preferences.reportReminderTime);
+    const summaryTime = timeToCron(params.preferences.summaryTime);
 
-      const duration = Date.now() - startTime;
-      console.log(`[Schedule Agent] Completed generate growth schedule successfully in ${duration}ms`);
+    const scheduledTasks = [
+      {
+        taskType: "daily_study_reminder" as const,
+        cronExpression: `${studyTime.minute} ${studyTime.hour} * * *`,
+        content: {
+          title: "每日学习提醒",
+          description: `每天 ${params.preferences.studyReminderTime} 提醒学习，生成学习资料和练习题`,
+          actionType: "generate_daily_lesson",
+          params: {
+            mapId: params.mapId,
+            includeExercises: true,
+            includeAnswers: true,
+          },
+        },
+      },
+      {
+        taskType: "daily_report_reminder" as const,
+        cronExpression: `${reportTime.minute} ${reportTime.hour} * * *`,
+        content: {
+          title: "每日日报提醒",
+          description: `每天 ${params.preferences.reportReminderTime} 提醒写学习日报`,
+          actionType: "send_report_reminder",
+          params: {
+            mapId: params.mapId,
+            reportType: "daily",
+          },
+        },
+      },
+      {
+        taskType: "daily_auto_summary" as const,
+        cronExpression: `${summaryTime.minute} ${summaryTime.hour} * * *`,
+        content: {
+          title: "每日自动总结",
+          description: `每天 ${params.preferences.summaryTime} 自动总结学习进度`,
+          actionType: "generate_daily_summary",
+          params: {
+            mapId: params.mapId,
+            analyzeProgress: true,
+          },
+        },
+      },
+      {
+        taskType: "weekly_report" as const,
+        cronExpression: `0 8 * * ${params.preferences.weeklyReportDay}`,
+        content: {
+          title: "每周学习周报",
+          description: `每周${["日", "一", "二", "三", "四", "五", "六"][params.preferences.weeklyReportDay]}生成学习周报`,
+          actionType: "generate_weekly_report",
+          params: {
+            mapId: params.mapId,
+          },
+        },
+      },
+      {
+        taskType: "monthly_report" as const,
+        cronExpression: `0 8 ${params.preferences.monthlyReportDay} * *`,
+        content: {
+          title: "每月学习月报",
+          description: `每月 ${params.preferences.monthlyReportDay} 号生成学习月报`,
+          actionType: "generate_monthly_report",
+          params: {
+            mapId: params.mapId,
+          },
+        },
+      },
+    ];
 
-      return {
-        dailySchedule: object.dailySchedule,
-        scheduledTasks,
-      };
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      const isAborted = error instanceof Error && 
-        (error.message.includes("Operation aborted") || error.name === "AbortError");
+    return {
+      dailySchedule: result.dailySchedule,
+      scheduledTasks,
+    };
+  }
+
+  // 使用 withAgentRetry 包装，支持质量验证和重试
+  const resultWithQuality = await withAgentRetry(
+    {
+      agentName: "Schedule Agent",
+      operation: "generate growth schedule with quality validation",
+      paramsPreview: `mapId: ${params.mapId}`,
+      maxRetries: 3,
+      retryDelayMs: 2000,
+      abortSignal: params.abortSignal,
+      buildPrompt: (previousError) => {
+        // 这里不需要返回 prompt，因为内部实现不依赖单一 prompt
+        return previousError || "";
+      },
+    },
+    async (errorFeedback, attempt) => {
+      // 如果是重试，在进度回调中提示
+      if (attempt > 1 && params.onStageProgress) {
+        console.log(`[Schedule Agent] 正在重试生成学习计划 (第 ${attempt} 次尝试)...`);
+      }
+
+      // 执行内部生成
+      const result = await generateGrowthScheduleInternal(params);
+
+      // 质量验证（在 withAgentRetry 回调内部执行）
+      console.log('[Schedule Agent] 🔍 开始质量评估（代码 + LLM 双重验证）...');
       
-      if (isAborted) {
-        console.log(`[Schedule Agent] Cancelled generate growth schedule by user after ${duration}ms`);
-      } else {
-        console.error(`[Schedule Agent] Failed generate growth schedule after ${duration}ms:`, 
-          error instanceof Error ? error.message : "Unknown error");
+      const qualityScore = await assessScheduleQualityComprehensive(
+        result,
+        params.mapContext,
+        params.abortSignal
+      );
+      
+      const qualityReport = generateQualityReport(qualityScore);
+      console.log(qualityReport);
+      
+      // 记录详细的 LLM 评估结果
+      if (qualityScore.llmAssessment) {
+        console.log('[Schedule Agent] 📊 LLM 评估详情:');
+        console.log(`  分数: ${qualityScore.llmAssessment.score}/100`);
+        console.log(`  通过: ${qualityScore.llmAssessment.passed ? '✅' : '❌'}`);
+        console.log(`  优势: ${qualityScore.llmAssessment.strengths.join(', ')}`);
+        console.log(`  弱点: ${qualityScore.llmAssessment.weaknesses.join(', ')}`);
+        console.log(`  反馈: ${qualityScore.llmAssessment.feedback}`);
       }
       
-      throw new Error(
-        `Failed to generate growth schedule: ${error instanceof Error ? error.message : "Unknown error"}`,
-      );
+      if (shouldRegenerate(qualityScore)) {
+        const errorParts = [
+          `Schedule quality below threshold.`,
+          `Code score: ${qualityScore.overall}/100 (${qualityScore.passed ? 'passed' : 'failed'})`,
+        ];
+        
+        if (qualityScore.llmAssessment) {
+          errorParts.push(
+            `LLM score: ${qualityScore.llmAssessment.score}/100 (${qualityScore.llmAssessment.passed ? 'passed' : 'failed'})`
+          );
+        }
+        
+        errorParts.push(`Issues: ${qualityScore.issues.slice(0, 3).join('; ')}`);
+        errorParts.push(`Suggestions: ${qualityScore.suggestions.slice(0, 3).join('; ')}`);
+        
+        throw new Error(errorParts.join(' | '));
+      }
+      
+      console.log(`[Schedule Agent] ✅ 质量评估通过 (Code: ${qualityScore.overall}/100${qualityScore.llmAssessment ? `, LLM: ${qualityScore.llmAssessment.score}/100` : ''})`);
+      
+      return result;
     }
+  );
+
+  // 生成定时任务的 cron 表达式
+  const studyTime = timeToCron(params.preferences.studyReminderTime);
+  const reportTime = timeToCron(params.preferences.reportReminderTime);
+  const summaryTime = timeToCron(params.preferences.summaryTime);
+
+  const scheduledTasks = [
+    {
+      taskType: "daily_study_reminder" as const,
+      cronExpression: `${studyTime.minute} ${studyTime.hour} * * *`,
+      content: {
+        title: "每日学习提醒",
+        description: `每天 ${params.preferences.studyReminderTime} 提醒学习，生成学习资料和练习题`,
+        actionType: "generate_daily_lesson",
+        params: {
+          mapId: params.mapId,
+          includeExercises: true,
+          includeAnswers: true,
+        },
+      },
+    },
+    {
+      taskType: "daily_report_reminder" as const,
+      cronExpression: `${reportTime.minute} ${reportTime.hour} * * *`,
+      content: {
+        title: "每日日报提醒",
+        description: `每天 ${params.preferences.reportReminderTime} 提醒写学习日报`,
+        actionType: "send_report_reminder",
+        params: {
+          mapId: params.mapId,
+          reportType: "daily",
+        },
+      },
+    },
+    {
+      taskType: "daily_auto_summary" as const,
+      cronExpression: `${summaryTime.minute} ${summaryTime.hour} * * *`,
+      content: {
+        title: "每日自动总结",
+        description: `每天 ${params.preferences.summaryTime} 自动总结学习进度`,
+        actionType: "generate_daily_summary",
+        params: {
+          mapId: params.mapId,
+          analyzeProgress: true,
+        },
+      },
+    },
+    {
+      taskType: "weekly_report" as const,
+      cronExpression: `0 8 * * ${params.preferences.weeklyReportDay}`,
+      content: {
+        title: "每周学习周报",
+        description: `每周${["日", "一", "二", "三", "四", "五", "六"][params.preferences.weeklyReportDay]}生成学习周报`,
+        actionType: "generate_weekly_report",
+        params: {
+          mapId: params.mapId,
+        },
+      },
+    },
+    {
+      taskType: "monthly_report" as const,
+      cronExpression: `0 8 ${params.preferences.monthlyReportDay} * *`,
+      content: {
+        title: "每月学习月报",
+        description: `每月 ${params.preferences.monthlyReportDay} 号生成学习月报`,
+        actionType: "generate_monthly_report",
+        params: {
+          mapId: params.mapId,
+        },
+      },
+    },
+  ];
+
+  return {
+    dailySchedule: resultWithQuality.dailySchedule,
+    scheduledTasks,
+  };
 }

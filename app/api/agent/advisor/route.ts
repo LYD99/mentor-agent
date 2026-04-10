@@ -10,6 +10,7 @@ import { getGrowthMapContext } from '@/lib/agents/growth-map-context'
 import { buildAdvisorSystemPrompt, buildScheduleDateContext } from '@/lib/prompts/advisor-prompts'
 import { buildRagDatasetsPrompt } from '@/lib/services/rag-prompt-builder'
 import { prisma } from '@/lib/db'
+import { selectAdvisorModelConfig } from '@/lib/config/model-config'
 
 type IncomingPart = { type?: string; text?: string }
 type IncomingMessage = {
@@ -245,6 +246,10 @@ export async function POST(req: Request) {
 
   // 8. 流式调用（带 Advisor 专用工具）- 使用消息流模式
   try {
+    // 选择 Advisor 专用模型
+    const modelConfig = selectAdvisorModelConfig()
+    console.log(`[Advisor API] Using model: ${modelConfig.model}`)
+    
     return await streamChat({
       systemPrompt,
       messages,
@@ -254,6 +259,7 @@ export async function POST(req: Request) {
       messageId: userMessageId,
       responseHeaders: { 'X-Chat-Session-Id': currentSessionId },
       abortSignal: req.signal,
+      model: modelConfig.model,
       toolContext: {
         userId,
         mapId: growthMapId,

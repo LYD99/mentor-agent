@@ -70,6 +70,7 @@ export default function SettingsPage() {
   const [ragLoading, setRagLoading] = useState(false)
   const [ragDialogOpen, setRagDialogOpen] = useState(false)
   const [editingDataset, setEditingDataset] = useState<RagDataset | null>(null)
+  const [tempEnvValues, setTempEnvValues] = useState<Record<string, string>>({})
 
   useEffect(() => {
     console.log('🔍 Settings 页面已挂载')
@@ -424,6 +425,30 @@ export default function SettingsPage() {
               const currentValue = envConfigData.values[def.key] || ''
               const actualValue = envConfigData.actualValues[def.key] || ''
 
+              // 获取用于判断显示/隐藏的值（优先使用临时值，其次是已保存的值）
+              const getValueForDependency = (key: string) => {
+                return tempEnvValues[key] || envConfigData.values[key] || envConfigData.actualValues[key] || ''
+              }
+
+              // 级联依赖：检查 dependsOn 字段（简单依赖：依赖项必须为 'true'）
+              if (def.dependsOn) {
+                const dependsOnValue = getValueForDependency(def.dependsOn)
+                // 如果依赖的配置项不为 'true'，则不显示此配置
+                if (dependsOnValue !== 'true') {
+                  return null
+                }
+              }
+
+              // 级联依赖：检查 dependsOnKey 和 dependsOnValue（复杂依赖：依赖项必须等于指定值）
+              // 注意：这是在 dependsOn 检查通过后的额外检查
+              if (def.dependsOnKey && def.dependsOnValue) {
+                const dependsOnKeyValue = getValueForDependency(def.dependsOnKey)
+                // 如果依赖的配置项的值不等于指定值，则不显示此配置
+                if (dependsOnKeyValue !== def.dependsOnValue) {
+                  return null
+                }
+              }
+
               return (
                 <div
                   key={def.key}
@@ -437,6 +462,10 @@ export default function SettingsPage() {
                     currentValue={currentValue}
                     actualValue={actualValue}
                     onSave={(value) => handleEnvSave(def.key, value)}
+                    onValueChange={(value) => {
+                      // 更新临时值，触发实时显示/隐藏
+                      setTempEnvValues(prev => ({ ...prev, [def.key]: value }))
+                    }}
                   />
                 </div>
               )

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Loader2, Search, Map, CheckCircle2, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, BookOpen } from 'lucide-react'
+import { Loader2, Search, Map, CheckCircle2, XCircle, Calendar, ChevronDown, ChevronRight, ExternalLink, BookOpen, ClipboardList, Activity, FolderSearch } from 'lucide-react'
 import Link from 'next/link'
 
 /**
@@ -47,7 +47,10 @@ const toolIcons: Record<string, any> = {
   create_growth_schedule: Calendar,
   search_web: Search,
   generate_lesson: BookOpen,
-  list_recent_learning_events: Calendar,
+  list_recent_learning_events: Activity,
+  get_task_learning_detail: ClipboardList,
+  search_user_materials: FolderSearch,
+  rag_retrieve: Search,
 }
 
 const toolLabels: Record<string, string> = {
@@ -57,6 +60,9 @@ const toolLabels: Record<string, string> = {
   search_web: '搜索学习资源',
   generate_lesson: '生成学习资料',
   list_recent_learning_events: '查询学习活动',
+  get_task_learning_detail: '获取任务详情',
+  search_user_materials: '搜索学习资料',
+  rag_retrieve: '知识库检索',
 }
 
 export function ToolCallStatus({ invocations }: { invocations: ToolInvocation[] }) {
@@ -104,10 +110,11 @@ function ToolCallItem({
 }) {
   const [showArgs, setShowArgs] = useState(false)
   const [stageProgress, setStageProgress] = useState<any[]>([])
+  const [lessonProgress, setLessonProgress] = useState<{ currentStep: number; totalSteps: number; message: string } | null>(null)
   
-  // 使用 SSE 实时接收进度更新（仅在加载中且是 create_growth_schedule 时）
+  // 使用 SSE 实时接收进度更新（支持 create_growth_schedule 和 generate_lesson）
   useEffect(() => {
-    if (!isLoading || inv.toolName !== 'create_growth_schedule') {
+    if (!isLoading || (inv.toolName !== 'create_growth_schedule' && inv.toolName !== 'generate_lesson')) {
       return
     }
     
@@ -132,6 +139,13 @@ function ToolCallItem({
             if (data.type === 'stage_progress' && data.stageProgress) {
               // 直接替换整个数组，后端发送的是完整的状态数组
               setStageProgress([...data.stageProgress])
+            } else if (data.type === 'lesson_progress') {
+              // 更新 lesson 生成进度
+              setLessonProgress({
+                currentStep: data.currentStep,
+                totalSteps: data.totalSteps,
+                message: data.message,
+              })
             } else if (data.type === 'completed' || data.type === 'failed') {
               // 工具执行完成，关闭连接
               eventSource?.close()
@@ -258,7 +272,7 @@ function ToolCallItem({
 
           {isLoading && (
             <div className="mt-2 space-y-2">
-              {/* 如果有阶段进度，显示详细进度 */}
+              {/* 如果有阶段进度（create_growth_schedule），显示详细进度 */}
               {stageProgress.length > 0 ? (
                 <div className="space-y-1.5">
                   <div className="text-xs font-medium text-muted-foreground mb-1.5">生成进度：</div>
@@ -285,6 +299,29 @@ function ToolCallItem({
                       </span>
                     </div>
                   ))}
+                </div>
+              ) : lessonProgress ? (
+                /* 如果有 lesson 进度（generate_lesson），显示步骤进度 */
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-muted-foreground">生成进度：</span>
+                    <span className="font-mono text-primary">
+                      {lessonProgress.currentStep}/{lessonProgress.totalSteps}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary flex-shrink-0" />
+                    <p className="text-xs text-primary font-medium">
+                      {lessonProgress.message}
+                    </p>
+                  </div>
+                  {/* 进度条 */}
+                  <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                    <div 
+                      className="bg-primary h-full transition-all duration-300 ease-out"
+                      style={{ width: `${(lessonProgress.currentStep / lessonProgress.totalSteps) * 100}%` }}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
@@ -444,60 +481,97 @@ function ToolCallItem({
                 </div>
               )}
 
-              {/* 学习事件列表预览（仅针对 list_recent_learning_events） */}
-              {inv.toolName === 'list_recent_learning_events' && inv.result?.events && inv.result.events.length > 0 && (
-                <div className="rounded-xl border border-purple-200/60 bg-gradient-to-br from-purple-50 via-pink-50/80 to-fuchsia-50/60 p-5 mt-3 shadow-sm">
+              {/* 任务详情预览（仅针对 get_task_learning_detail） */}
+              {inv.toolName === 'get_task_learning_detail' && inv.result && typeof inv.result === 'string' && (
+                <div className="rounded-xl border border-indigo-200/60 bg-gradient-to-br from-indigo-50 via-blue-50/80 to-cyan-50/60 p-5 mt-3 shadow-sm">
                   <div className="flex items-center gap-2.5 mb-4">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 shadow-md">
-                      <Calendar className="h-5 w-5 text-white" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-blue-600 shadow-md">
+                      <ClipboardList className="h-5 w-5 text-white" />
                     </div>
                     <div>
-                      <div className="font-semibold text-base text-purple-900">最近学习活动</div>
-                      <div className="text-xs text-purple-600/70">共 {inv.result.events.length} 条记录</div>
+                      <div className="font-semibold text-base text-indigo-900">任务学习详情</div>
+                      <div className="text-xs text-indigo-600/70">包含任务信息、学习资料和会话记录</div>
                     </div>
                   </div>
                   
-                  <div className="space-y-2.5">
-                    {inv.result.events.slice(0, 5).map((event: any, idx: number) => {
-                      const eventTypeConfig = {
-                        'lesson_completed': { icon: '📚', label: '完成学习', color: 'text-blue-600 bg-blue-50 border-blue-200' },
-                        'exercise_completed': { icon: '✅', label: '完成练习', color: 'text-green-600 bg-green-50 border-green-200' },
-                        'task_started': { icon: '🚀', label: '开始任务', color: 'text-purple-600 bg-purple-50 border-purple-200' },
-                        'material_created': { icon: '📝', label: '创建资料', color: 'text-orange-600 bg-orange-50 border-orange-200' },
-                      }
-                      const config = eventTypeConfig[event.eventType as keyof typeof eventTypeConfig] || { 
-                        icon: '📌', 
-                        label: event.eventType || '未知', 
-                        color: 'text-gray-600 bg-gray-50 border-gray-200' 
-                      }
-                      
-                      return (
-                        <div key={idx} className="flex items-start gap-3 p-3 rounded-lg bg-white/90 border border-purple-100 shadow-sm hover:shadow-md transition-all">
-                          <div className="flex-shrink-0 flex flex-col items-center gap-1 pt-0.5">
-                            <div className="text-xs font-semibold text-purple-900">
-                              {event.timestamp ? new Date(event.timestamp).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) : 'N/A'}
-                            </div>
-                            <div className="text-[10px] text-purple-600/60 font-mono">
-                              {event.timestamp ? new Date(event.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}
-                            </div>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium text-gray-900 mb-1.5 line-clamp-1">
-                              {event.taskTitle || event.lessonTitle || '未命名'}
-                            </div>
-                            <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${config.color}`}>
-                              <span>{config.icon}</span>
-                              <span>{config.label}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                    {inv.result.events.length > 5 && (
-                      <div className="text-xs text-center text-purple-600/70 pt-2 font-medium">
-                        + 还有 {inv.result.events.length - 5} 条活动记录
-                      </div>
-                    )}
+                  <div className="prose prose-sm max-w-none prose-headings:text-indigo-900 prose-p:text-gray-700 prose-strong:text-gray-900 prose-li:text-gray-700">
+                    <div className="p-4 rounded-lg bg-white/90 border border-indigo-100 shadow-sm">
+                      <div 
+                        className="text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{ 
+                          __html: inv.result
+                            .replace(/^## /gm, '<h3 class="text-base font-semibold mt-4 mb-2 first:mt-0">')
+                            .replace(/\n\n/g, '</p><p class="mb-2">')
+                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/^(\d+\. )/gm, '<br/>$1')
+                            .replace(/^(   )/gm, '<span class="ml-4 text-xs text-gray-600">')
+                            .replace(/\n/g, '</span>')
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 搜索用户资料预览（仅针对 search_user_materials） */}
+              {inv.toolName === 'search_user_materials' && inv.result && typeof inv.result === 'string' && (
+                <div className="rounded-xl border border-teal-200/60 bg-gradient-to-br from-teal-50 via-emerald-50/80 to-green-50/60 p-5 mt-3 shadow-sm">
+                  <div className="flex items-center gap-2.5 mb-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-teal-500 to-emerald-600 shadow-md">
+                      <FolderSearch className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-base text-teal-900">搜索结果</div>
+                      <div className="text-xs text-teal-600/70">找到的学习资料</div>
+                    </div>
+                  </div>
+                  
+                  <div className="prose prose-sm max-w-none prose-headings:text-teal-900 prose-p:text-gray-700 prose-strong:text-gray-900">
+                    <div className="p-4 rounded-lg bg-white/90 border border-teal-100 shadow-sm">
+                      <div 
+                        className="text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{ 
+                          __html: inv.result
+                            .replace(/^## /gm, '<h3 class="text-base font-semibold mt-4 mb-2 first:mt-0">')
+                            .replace(/^### /gm, '<h4 class="text-sm font-semibold mt-3 mb-1.5">')
+                            .replace(/\n\n/g, '</p><p class="mb-2">')
+                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/\n/g, '<br/>')
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 学习事件列表预览（仅针对 list_recent_learning_events） */}
+              {inv.toolName === 'list_recent_learning_events' && inv.result && typeof inv.result === 'string' && (
+                <div className="rounded-xl border border-purple-200/60 bg-gradient-to-br from-purple-50 via-pink-50/80 to-fuchsia-50/60 p-5 mt-3 shadow-sm">
+                  <div className="flex items-center gap-2.5 mb-4">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 shadow-md">
+                      <Activity className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-base text-purple-900">最近学习活动</div>
+                      <div className="text-xs text-purple-600/70">查看学习历史记录</div>
+                    </div>
+                  </div>
+                  
+                  <div className="prose prose-sm max-w-none prose-headings:text-purple-900 prose-p:text-gray-700 prose-strong:text-gray-900 prose-li:text-gray-700">
+                    <div className="p-4 rounded-lg bg-white/90 border border-purple-100 shadow-sm">
+                      <div 
+                        className="text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{ 
+                          __html: inv.result
+                            .replace(/^## /gm, '<h3 class="text-base font-semibold mt-4 mb-2 first:mt-0">')
+                            .replace(/\n\n/g, '</p><p class="mb-2">')
+                            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/^(\d+\. )/gm, '<br/>$1')
+                            .replace(/^(   )/gm, '<span class="ml-4 text-xs text-gray-600">')
+                            .replace(/\n/g, '</span>')
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}

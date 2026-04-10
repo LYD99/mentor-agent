@@ -17,19 +17,25 @@ function truncateToolParamsForLog(params: any): any {
   if (!params || typeof params !== 'object') {
     return params
   }
-  
+
   const truncated = { ...params }
-  const fieldsToTruncate = [
-    'researchSummary',
-    'contextPack', 
-    'mapContext',
-    'description',
-    'content',
-  ]
   
-  for (const field of fieldsToTruncate) {
+  // 不同字段使用不同的截断长度
+  const truncateConfig: Record<string, number> = {
+    'researchSummary': 200,
+    'contextPack': 200,
+    'mapContext': 200,
+    'description': 150,
+    'content': 150,
+    'knownMaterials': 300, // 已知学习资料，展示更多内容
+  }
+
+  for (const [field, maxLength] of Object.entries(truncateConfig)) {
     if (truncated[field] && typeof truncated[field] === 'string') {
-      truncated[field] = truncateForLog(truncated[field])
+      const text = truncated[field]
+      if (text.length > maxLength) {
+        truncated[field] = text.substring(0, maxLength) + `... (${text.length} chars total)`
+      }
     }
   }
   
@@ -56,8 +62,12 @@ export async function streamChat(params: {
   responseHeaders?: HeadersInit
   abortSignal?: AbortSignal
   toolContext?: Record<string, any>
+  model?: string // 可选：指定使用的模型
 }) {
-  const { messages, systemPrompt, tools, userId, sessionId, messageId, responseHeaders, abortSignal, toolContext } = params
+  const { messages, systemPrompt, tools, userId, sessionId, messageId, responseHeaders, abortSignal, toolContext, model: customModel } = params
+
+  // 使用自定义模型或环境变量中的模型
+  const modelName = customModel || getEnv('AI_MODEL') || 'gpt-4o-mini'
 
   const combinedController = new AbortController()
   const combinedSignal = combinedController.signal
@@ -110,7 +120,7 @@ export async function streamChat(params: {
                       role: 'assistant',
                       content: textToSave,
                     },
-                    model: getEnv('AI_MODEL'),
+                    model: modelName,
                   }).then(() => {
                     console.log(`[Tool ${name}] Saved accumulated text before tool execution`)
                   }).catch((error) => {
@@ -171,7 +181,7 @@ export async function streamChat(params: {
                           type: 'function',
                           function: {
                             name,
-                            arguments: JSON.stringify(params),
+                            arguments: JSON.stringify(truncatedParams), // 使用截断后的参数
                           },
                         }],
                       },
@@ -235,7 +245,7 @@ export async function streamChat(params: {
                           type: 'function',
                           function: {
                             name,
-                            arguments: JSON.stringify(params),
+                            arguments: JSON.stringify(truncatedParams), // 使用截断后的参数
                           },
                         }],
                       },
@@ -286,7 +296,7 @@ export async function streamChat(params: {
   let accumulatedText = ''
 
   const result = streamText({
-    model: openaiProvider(getEnv('AI_MODEL') || 'gpt-4o-mini'),
+    model: openaiProvider(modelName),
     messages: allMessages as any,
     tools: toolsWithErrorHandling,
     maxSteps: 5,

@@ -73,20 +73,7 @@ check_env() {
         log_warning ".env 文件不存在，正在从模板创建..."
         if [ -f .env.example ]; then
             cp .env.example .env
-            log_warning "已创建 .env 文件，请编辑并填入必要的配置："
-            log_warning "  - DATABASE_URL: 数据库连接字符串"
-            log_warning "  - AUTH_SECRET: 认证密钥（运行: openssl rand -base64 32）"
-            log_warning "  - AI_API_KEY: AI API 密钥"
-            log_warning "  - ENCRYPTION_KEY: 加密密钥（运行: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"）"
-            echo ""
-            read -p "是否现在编辑 .env 文件？(y/n) " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                ${EDITOR:-nano} .env
-            else
-                log_error "请手动编辑 .env 文件后重新运行此脚本"
-                exit 1
-            fi
+            log_success "已创建 .env 文件"
         else
             log_error ".env.example 文件不存在！"
             exit 1
@@ -95,20 +82,64 @@ check_env() {
         log_success ".env 文件已存在"
     fi
     
+    # 自动生成 AUTH_SECRET（如果未配置）
+    if ! grep -q "^AUTH_SECRET=" .env || grep -q "^AUTH_SECRET=your-secret-here" .env || grep -q "^AUTH_SECRET=$" .env; then
+        log_info "自动生成 AUTH_SECRET..."
+        AUTH_SECRET=$(openssl rand -base64 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+        if grep -q "^AUTH_SECRET=" .env; then
+            # 替换现有行
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s|^AUTH_SECRET=.*|AUTH_SECRET=$AUTH_SECRET|" .env
+            else
+                sed -i "s|^AUTH_SECRET=.*|AUTH_SECRET=$AUTH_SECRET|" .env
+            fi
+        else
+            # 添加新行
+            echo "AUTH_SECRET=$AUTH_SECRET" >> .env
+        fi
+        log_success "AUTH_SECRET 已自动生成"
+    fi
+    
+    # 自动生成 ENCRYPTION_KEY（如果未配置）
+    if ! grep -q "^ENCRYPTION_KEY=" .env || grep -q "^ENCRYPTION_KEY=your-64-char-hex-key-here" .env || grep -q "^ENCRYPTION_KEY=$" .env; then
+        log_info "自动生成 ENCRYPTION_KEY..."
+        ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+        if grep -q "^ENCRYPTION_KEY=" .env; then
+            # 替换现有行
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$ENCRYPTION_KEY|" .env
+            else
+                sed -i "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$ENCRYPTION_KEY|" .env
+            fi
+        else
+            # 添加新行（在合适的位置）
+            if grep -q "^# ENCRYPTION" .env; then
+                # 如果有 ENCRYPTION 注释，在其后添加
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "/^# ENCRYPTION/a\\
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+" .env
+                else
+                    sed -i "/^# ENCRYPTION/a ENCRYPTION_KEY=$ENCRYPTION_KEY" .env
+                fi
+            else
+                # 否则添加到文件末尾
+                echo "" >> .env
+                echo "# ENCRYPTION" >> .env
+                echo "ENCRYPTION_KEY=$ENCRYPTION_KEY" >> .env
+            fi
+        fi
+        log_success "ENCRYPTION_KEY 已自动生成"
+    fi
+    
     # 检查关键环境变量
     source .env
     if [ -z "$AI_API_KEY" ] || [ "$AI_API_KEY" = "your-api-key-here" ]; then
-        log_error "AI_API_KEY 未配置！请编辑 .env 文件"
+        log_error "AI_API_KEY 未配置！请编辑 .env 文件并设置您的 AI API 密钥"
+        log_info "提示：编辑 .env 文件，设置 AI_API_KEY=your-actual-api-key"
         exit 1
     fi
-    if [ -z "$AUTH_SECRET" ] || [ "$AUTH_SECRET" = "your-secret-here" ]; then
-        log_error "AUTH_SECRET 未配置！请编辑 .env 文件"
-        exit 1
-    fi
-    if [ -z "$ENCRYPTION_KEY" ] || [ "$ENCRYPTION_KEY" = "your-64-char-hex-key-here" ]; then
-        log_error "ENCRYPTION_KEY 未配置！请编辑 .env 文件"
-        exit 1
-    fi
+    
     log_success "环境变量配置检查通过"
 }
 

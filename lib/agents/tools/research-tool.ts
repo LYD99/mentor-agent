@@ -23,9 +23,19 @@ Examples:
     query: z.string().describe('The search query - be specific and include relevant keywords'),
   }),
   
-  execute: async ({ query }: { query: string }) => {
+  execute: async ({ query }: { query: string }, context?: { abortSignal?: AbortSignal }) => {
+    // 检查是否已中断
+    if (context?.abortSignal?.aborted) {
+      return {
+        success: false,
+        error: 'Search aborted by user',
+        query,
+      }
+    }
     try {
-      const results = await searchWeb(query)
+      const results = await searchWeb(query, {
+        abortSignal: context?.abortSignal,
+      })
       
       return {
         success: true,
@@ -38,10 +48,14 @@ Examples:
         summary: `Found ${results.length} result(s) for "${query}"`,
       }
     } catch (error) {
+      // 检查是否为中断错误
+      const isAborted = error instanceof Error && 
+        (error.message.includes('aborted') || error.name === 'AbortError');
+      
       console.error('Research tool error:', error)
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Search failed',
+        error: isAborted ? 'Search aborted by user' : (error instanceof Error ? error.message : 'Search failed'),
         query,
       }
     }

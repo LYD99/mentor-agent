@@ -36,14 +36,30 @@ export async function buildRagDatasetsPrompt(userId: string): Promise<string> {
 
   return `
 
-可用知识库：
+## Available Knowledge Bases
+
 ${datasetsText}
 
-使用建议：
-- 当用户询问与上述知识库相关的问题时，优先使用 rag_retrieve 工具
-- 根据用户问题的主题，选择最合适的知识库
-- 可以组合使用多个知识库的结果
-- 知识库中的信息通常比网络搜索更准确、更专业
+### RAG Usage Guidelines:
+
+**When to Use RAG:**
+- User questions directly related to the knowledge bases above
+- Need for authoritative, domain-specific information
+- Seeking official documentation or established best practices
+- Questions requiring precise, verified information
+
+**Best Practices:**
+- Select the most relevant knowledge base based on the question topic
+- Use specific, targeted queries for better retrieval results
+- Combine results from multiple knowledge bases when appropriate
+- RAG information is typically more accurate and authoritative than web search
+- Cross-reference RAG results with your knowledge for completeness
+
+**Query Optimization:**
+- Use clear, specific keywords related to the knowledge base domain
+- Include technical terms and concepts when relevant
+- Break complex questions into focused sub-queries
+- Refine queries if initial results are not satisfactory
 `
 }
 

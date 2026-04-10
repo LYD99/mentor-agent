@@ -32,8 +32,11 @@ export const progressBroadcaster = {
    * 推送进度更新
    */
   pushProgress(toolCallId: string, data: {
-    type: 'stage_progress' | 'completed' | 'failed'
+    type: 'stage_progress' | 'lesson_progress' | 'completed' | 'failed'
     stageProgress?: any[]
+    currentStep?: number
+    totalSteps?: number
+    message?: string
     result?: any
     error?: string
   }) {
