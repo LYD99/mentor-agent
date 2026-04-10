@@ -338,6 +338,10 @@ function MaterialsPageContent() {
     if (material.sourceTable === 'LearningLesson') {
       return `/lesson/${material.id}`
     }
+    // 如果是报告类型（日报、周报、月报），跳转到报告详情页
+    if (material.category === 'daily' || material.category === 'weekly' || material.category === 'monthly') {
+      return `/reports/${material.category}/${material.id}`
+    }
     // 否则跳转到 /materials/[id] 详情页
     return `/materials/${material.id}`
   }
