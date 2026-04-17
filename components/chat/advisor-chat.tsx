@@ -12,6 +12,7 @@ import { zhCN } from 'date-fns/locale'
 import { Loader2, MessageSquarePlus, PanelLeftClose, PanelLeft, User, LogOut, Home, Bot, BookOpen, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { ToolCallStatus } from './tool-call-status'
 import { LearningResourceSelector } from './learning-resource-selector'
 import { cn } from '@/lib/utils'
@@ -877,23 +878,23 @@ export function AdvisorChat({ lessonId, taskId }: AdvisorChatProps) {
                 disabled={isLoading || historyLoading}
               />
               <div className="flex gap-2">
-                <Input
+                <Textarea
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={(e) => {
                     if (e.key !== 'Enter') return
-                    // 处于 IME 组合态（如拼音候选中）时按回车不发送
-                    if (
-                      e.nativeEvent.isComposing ||
-                      e.keyCode === 229 ||
-                      e.shiftKey
-                    ) {
-                      e.preventDefault()
-                    }
+                    // IME 组合态（拼音候选）：交给输入法，不发送也不拦截换行逻辑
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return
+                    // Shift+Enter：默认行为（换行），不发送
+                    if (e.shiftKey) return
+                    // 普通 Enter：发送，阻止换行
+                    e.preventDefault()
+                    e.currentTarget.form?.requestSubmit()
                   }}
-                  placeholder="向 Advisor 提问…（回车发送）"
+                  placeholder="向 Advisor 提问…（Enter 发送，Shift+Enter 换行）"
                   disabled={isLoading || historyLoading}
-                  className="flex-1"
+                  rows={2}
+                  className="flex-1 min-h-[44px] max-h-[200px] resize-none"
                 />
                 {isLoading ? (
                   <Button 
