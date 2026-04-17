@@ -196,5 +196,5 @@ None. All optimizations are backward compatible.
 - Exercise system
 - Progress visualization
 
-[Unreleased]: https://github.com/yourusername/mentor-agent/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/yourusername/mentor-agent/releases/tag/v0.1.0
+[Unreleased]: https://github.com/LYD99/mentor-agent/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/LYD99/mentor-agent/releases/tag/v0.1.0

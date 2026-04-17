@@ -92,7 +92,7 @@
 只需一条命令，自动完成克隆、依赖安装、数据库初始化、密钥生成与启动：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourusername/mentor-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/LYD99/mentor-agent/main/install.sh | bash
 ```
 
 > 如果还没装 Node.js 18+，请先安装：macOS 上 `brew install node`，或从 [nodejs.org](https://nodejs.org/) 下载。
@@ -109,7 +109,7 @@ curl -fsSL https://raw.githubusercontent.com/yourusername/mentor-agent/main/inst
 ### 已克隆仓库？手动启动
 
 ```bash
-git clone https://github.com/yourusername/mentor-agent.git
+git clone https://github.com/LYD99/mentor-agent.git
 cd mentor-agent
 ./start.sh
 ```
@@ -628,8 +628,8 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ## 联系方式
 
-- 提交 Issue: [GitHub Issues](https://github.com/yourusername/mentor-agent/issues)
-- 功能建议: [GitHub Discussions](https://github.com/yourusername/mentor-agent/discussions)
+- 提交 Issue: [GitHub Issues](https://github.com/LYD99/mentor-agent/issues)
+- 功能建议: [GitHub Discussions](https://github.com/LYD99/mentor-agent/discussions)
 - Pull Request: 欢迎贡献代码
 
 ---

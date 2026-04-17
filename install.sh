@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Mentor Agent 一键安装脚本
 # 用法：
-#   curl -fsSL https://raw.githubusercontent.com/yourusername/mentor-agent/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/LYD99/mentor-agent/main/install.sh | bash
 #
 # 环境变量（可选）：
-#   REPO_URL       自定义仓库地址（默认 https://github.com/yourusername/mentor-agent.git）
+#   REPO_URL       自定义仓库地址（默认 https://github.com/LYD99/mentor-agent.git）
 #   INSTALL_DIR    安装目录（默认 mentor-agent）
 #   BRANCH         分支（默认 main）
 
 set -e
 
-REPO_URL="${REPO_URL:-https://github.com/yourusername/mentor-agent.git}"
+REPO_URL="${REPO_URL:-https://github.com/LYD99/mentor-agent.git}"
 INSTALL_DIR="${INSTALL_DIR:-mentor-agent}"
 BRANCH="${BRANCH:-main}"
 

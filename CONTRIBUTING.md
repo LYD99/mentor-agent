@@ -8,7 +8,7 @@
 
 如果你发现了 bug 或有功能建议：
 
-1. 在 [Issues](https://github.com/yourusername/mentor-agent/issues) 中搜索是否已有相关问题
+1. 在 [Issues](https://github.com/LYD99/mentor-agent/issues) 中搜索是否已有相关问题
 2. 如果没有，创建新的 Issue
 3. 清晰描述问题或建议，包括：
    - 问题描述
@@ -26,7 +26,7 @@
 2. **克隆你的 Fork**
 
    ```bash
-   git clone https://github.com/yourusername/mentor-agent.git
+   git clone https://github.com/LYD99/mentor-agent.git
    cd mentor-agent
    ```
 
@@ -179,7 +179,7 @@
 ## 获取帮助
 
 - 查看 [文档](docs/)
-- 提交 [Issue](https://github.com/yourusername/mentor-agent/issues)
+- 提交 [Issue](https://github.com/LYD99/mentor-agent/issues)
 - 加入讨论（如有社区）
 
 ## 行为准则
