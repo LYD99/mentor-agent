@@ -880,7 +880,18 @@ export function AdvisorChat({ lessonId, taskId }: AdvisorChatProps) {
                 <Input
                   value={input}
                   onChange={handleInputChange}
-                  placeholder="向 Advisor 提问…"
+                  onKeyDown={(e) => {
+                    if (e.key !== 'Enter') return
+                    // 处于 IME 组合态（如拼音候选中）时按回车不发送
+                    if (
+                      e.nativeEvent.isComposing ||
+                      e.keyCode === 229 ||
+                      e.shiftKey
+                    ) {
+                      e.preventDefault()
+                    }
+                  }}
+                  placeholder="向 Advisor 提问…（回车发送）"
                   disabled={isLoading || historyLoading}
                   className="flex-1"
                 />
