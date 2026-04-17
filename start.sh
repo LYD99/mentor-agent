@@ -5,11 +5,10 @@
 
 set -e  # 遇到错误立即退出
 
-# 通过 `curl ... | bash` 管道调用时，stdin 被 curl 占用，
-# 将其重定向到 /dev/tty 以支持交互式 read
-if [ ! -t 0 ] && [ -r /dev/tty ]; then
-    exec < /dev/tty
-fi
+# 说明：start.sh 始终作为文件被调用（`./start.sh` 或由 install.sh 重新
+# exec 后调用），stdin 天然是 tty，因此不需要也不应该在此处执行
+# `exec < /dev/tty` —— 那会在脚本源自 pipe 的场景下让 bash 从 tty 读取
+# 后续脚本内容导致挂起。
 
 # 颜色定义
 RED='\033[0;31m'
