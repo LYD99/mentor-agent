@@ -147,21 +147,22 @@ prompt_ai_key() {
         echo ""
         echo "请在浏览器中 登录/注册 并 创建 API Key，然后粘贴到此处。"
         echo "（若使用其他 OpenAI 兼容服务，也可直接粘贴对应 Key）"
+        echo "若暂时没有 Key，可直接回车跳过，稍后在应用「设置」页面配置。"
         echo ""
 
         local attempt=0
+        local max_attempts=3
         while true; do
             attempt=$((attempt + 1))
-            printf "请输入 AI_API_KEY: "
+            printf "请输入 AI_API_KEY（回车跳过）: "
             local input_key=""
             IFS= read -r input_key || true
             input_key="${input_key#"${input_key%%[![:space:]]*}"}" # 去前空格
             input_key="${input_key%"${input_key##*[![:space:]]}"}" # 去后空格
 
             if [ -z "$input_key" ]; then
-                log_error "API Key 不能为空"
-                [ "$attempt" -ge 5 ] && { log_error "多次输入失败，退出"; exit 1; }
-                continue
+                remind_settings_page "AI_API_KEY"
+                return 0
             fi
 
             # 若用户之前未配置过 base_url 或仍是默认 openai，则默认设置为 DeepSeek
@@ -184,8 +185,13 @@ prompt_ai_key() {
                 log_success "AI_API_KEY 校验通过，已写入 .env"
                 return 0
             elif [ $rc -eq 1 ]; then
-                log_error "API Key 认证失败，请重试（或按 Ctrl+C 退出）"
-                [ "$attempt" -ge 5 ] && { log_error "多次校验失败，退出"; exit 1; }
+                log_error "API Key 认证失败"
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                    log_warning "多次校验失败，将跳过本次配置"
+                    remind_settings_page "AI_API_KEY"
+                    return 0
+                fi
+                echo "  请重试（回车跳过、Ctrl+C 退出）"
             else
                 log_warning "无法连接 AI 服务进行校验，暂按你输入保存"
                 set_env_var AI_API_KEY "$input_key"
@@ -195,6 +201,20 @@ prompt_ai_key() {
             fi
         done
     fi
+}
+
+# 提醒用户稍后可在应用「设置」页面补填 API Key
+remind_settings_page() {
+    local key_name=${1:-API Key}
+    local port
+    port=$(get_env_var PORT)
+    [ -z "$port" ] && port=3000
+    echo ""
+    log_warning "已跳过 ${key_name} 配置"
+    log_info "应用启动后，请打开设置页面进行配置："
+    log_info "  → http://localhost:${port}/settings"
+    log_info "  选择「环境变量」标签即可填写 ${key_name}"
+    echo ""
 }
 
 # 交互式引导用户配置 TAVILY_API_KEY（可选）
@@ -222,7 +242,7 @@ prompt_tavily_key() {
         set_env_var TAVILY_API_KEY "$tavily_key"
         log_success "TAVILY_API_KEY 已保存"
     else
-        log_info "已跳过 Tavily 配置（联网搜索功能将不可用）"
+        remind_settings_page "TAVILY_API_KEY"
     fi
 }
 
