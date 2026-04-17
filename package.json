@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/mentor-agent.git"
+    "url": "https://github.com/LYD99/mentor-agent.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/mentor-agent/issues"
+    "url": "https://github.com/LYD99/mentor-agent/issues"
   },
-  "homepage": "https://github.com/yourusername/mentor-agent#readme",
+  "homepage": "https://github.com/LYD99/mentor-agent#readme",
   "keywords": [
     "ai",
     "education",
