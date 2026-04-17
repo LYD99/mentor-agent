@@ -81,15 +81,27 @@ if [ "${NODE_MAJOR:-0}" -lt 18 ]; then
     exit 1
 fi
 
-# Clone 或更新仓库
+# 统一禁用用户自定义 git hooks，避免用户全局 core.hooksPath（例如企业内的
+# post-checkout / pre-commit 脚本）在克隆/切换分支时失败而中断安装。
+# -c core.hooksPath=/dev/null 只影响本次命令，不改动用户全局 git 配置。
+GIT="git -c core.hooksPath=/dev/null -c advice.detachedHead=false"
+
 if [ -d "$INSTALL_DIR/.git" ]; then
     log_info "检测到已有仓库：$INSTALL_DIR，拉取最新代码..."
-    git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
-    git -C "$INSTALL_DIR" checkout "$BRANCH" >/dev/null 2>&1 || true
-    git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+    $GIT -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
+    $GIT -C "$INSTALL_DIR" checkout "$BRANCH" >/dev/null 2>&1 || true
+    $GIT -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+elif [ -d "$INSTALL_DIR" ] && [ -z "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+    log_warning "发现空目录 $INSTALL_DIR，将直接在其中克隆"
+    rmdir "$INSTALL_DIR" 2>/dev/null || true
+    log_info "克隆仓库到 ./$INSTALL_DIR ..."
+    $GIT clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+elif [ -d "$INSTALL_DIR" ]; then
+    log_error "目录 $INSTALL_DIR 已存在且非 git 仓库，请先删除或改用 INSTALL_DIR=<别的名字>"
+    exit 1
 else
     log_info "克隆仓库到 ./$INSTALL_DIR ..."
-    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    $GIT clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 
 cd "$INSTALL_DIR"
