@@ -144,8 +144,8 @@ export function LearningScheduleView({
       if (!schedule?.dailySchedule) return
       
       try {
-        // 获取所有日期的学习资料
-        const res = await fetch(`/api/materials?type=materials&limit=100`, {
+        // 获取当前地图的所有学习资料（按 mapId 过滤）
+        const res = await fetch(`/api/materials?type=materials&mapId=${mapId}&limit=1000`, {
           credentials: 'include',
         })
         
@@ -157,10 +157,23 @@ export function LearningScheduleView({
           const statusMap: Record<string, boolean> = {}
           
           schedule.dailySchedule.forEach(day => {
-            // 检查该日期是否有学习资料
-            const hasMaterials = materials.some((m: any) => 
-              m.planDate && m.planDate.split('T')[0] === day.date
-            )
+            // 检查该日期是否有学习资料（必须属于当前地图）
+            const hasMaterials = materials.some((m: any) => {
+              // 检查 mapId 匹配
+              if (m.mapId !== mapId) return false
+              
+              // 检查日期匹配（支持多种日期字段）
+              if (m.planDate) {
+                return m.planDate.split('T')[0] === day.date
+              }
+              
+              // 如果有 dailyPlanId，通过 planId 匹配
+              if (m.dailyPlanId && day.planId) {
+                return m.dailyPlanId === day.planId
+              }
+              
+              return false
+            })
             statusMap[day.date] = hasMaterials
           })
           
@@ -172,7 +185,7 @@ export function LearningScheduleView({
     }
     
     loadMaterialsStatus()
-  }, [schedule])
+  }, [schedule, mapId])
 
   const handleGenerateSchedule = () => {
     // 跳转到 mentor chat，创建新会话并引用地图

@@ -9,7 +9,17 @@ import { prisma } from '@/lib/db'
  * 为 Advisor Agent 提供生成学习资料的能力
  */
 export const generateLessonTool = tool({
-  description: `生成详细的学习资料和练习题。
+  description: `生成详细的学习资料和练习题（使用多步骤生成策略）。
+
+⚡ 生成过程：
+本工具采用多步骤生成策略，将复杂的学习资料拆分为 4-5 个步骤：
+1. 📝 生成大纲和关键点
+2. 📚 生成详细内容（2-3个章节）
+3. 💡 生成常见误区和实际应用
+4. 📝 生成练习题
+5. 📚 生成学习资源和后续步骤
+
+每个步骤完成后会在控制台输出进度，最终结果会包含完整的进度摘要。
 
 使用场景：
 - 用户请求为某个学习任务生成详细的学习资料
@@ -27,11 +37,12 @@ export const generateLessonTool = tool({
 - difficulty: 难度级别（可选：beginner/intermediate/advanced）
 - suggestedDuration: 建议学习时长（分钟，可选）
 - prerequisites: 前置知识（可选）
-- focusAreas: 重点关注领域（可选）
+- focusAreas: 重点关注领域（可选，影响详细内容章节数量）
 - knownMaterials: 已知的学习资料或参考内容（可选，如果已经通过 search_web 查询过，传入这里避免重复查询）
 
 输出：
-- 包含简介、关键点、详细内容、练习题、学习资源的完整学习资料`,
+- 包含简介、关键点、详细内容、练习题、学习资源的完整学习资料
+- 顶部会显示生成进度摘要`,
 
   parameters: z.object({
     taskTitle: z.string().describe('学习任务的标题，例如："深度学习基础"'),
@@ -50,6 +61,8 @@ export const generateLessonTool = tool({
     scheduleDate?: string;
     taskIds?: string[];
     dailyPlanIds?: string[];
+    abortSignal?: AbortSignal;
+    toolCallId?: string;
   }) => {
     try {
       const userId = context?.userId
@@ -57,6 +70,8 @@ export const generateLessonTool = tool({
       const scheduleDate = context?.scheduleDate
       const taskIds = context?.taskIds || []
       const dailyPlanIds = context?.dailyPlanIds || []
+      const abortSignal = context?.abortSignal
+      const toolCallId = context?.toolCallId
       
       console.log(`[Generate Lesson Tool] Generating lesson: ${params.taskTitle}`, {
         hasKnownMaterials: !!params.knownMaterials,
@@ -66,6 +81,7 @@ export const generateLessonTool = tool({
         scheduleDate,
         taskIdsCount: taskIds.length,
         dailyPlanIdsCount: dailyPlanIds.length,
+        toolCallId,
       })
       
       // 构建 metadata
@@ -79,23 +95,46 @@ export const generateLessonTool = tool({
         focusAreas: params.focusAreas || [],
       }
 
-      // 构建任务描述，如果有 knownMaterials，附加到描述中
-      let enhancedDescription = params.taskDescription || ''
+      // knownMaterials 处理：不附加到描述中，直接传递给生成器
+      // 这样可以避免 prompt 过长，同时保留完整的参考信息
       if (params.knownMaterials) {
-        enhancedDescription += `\n\n参考资料：\n${params.knownMaterials}`
+        console.log(`[Generate Lesson Tool] Using knownMaterials: ${params.knownMaterials.length} chars (passed to generator)`)
       }
 
       // 调用 Lesson Agent 生成学习资料
       // 如果提供了 knownMaterials，则不进行在线研究（避免重复）
       // v2.5: goalTitle 参数已移除
+      
+      // 创建进度回调函数
+      // 进度信息通过 SSE 推送到前端，同时在控制台显示
+      const onProgress = (step: number, total: number, message: string) => {
+        const progressMsg = `📊 [${step}/${total}] ${message}`;
+        console.log(`[Generate Lesson Tool] Progress: ${progressMsg}`);
+        
+        // 如果有 toolCallId，通过 SSE 推送进度
+        if (toolCallId) {
+          const { progressBroadcaster } = require('@/lib/storage/progress-broadcaster')
+          progressBroadcaster.pushProgress(toolCallId, {
+            type: 'lesson_progress',
+            currentStep: step,
+            totalSteps: total,
+            message,
+          })
+        }
+      };
+      
       const lessonContent = await generateLesson({
         taskTitle: params.taskTitle,
-        taskDescription: enhancedDescription,
+        taskDescription: params.taskDescription || '',
         taskType: 'learn', // 默认类型
         stageTitle: '自定义学习', // 占位符
         metadata,
+        includeExercises: true, // 默认生成练习题
         includeResearch: !params.knownMaterials, // 如果有已知资料，就不再查询
         userId, // 传递 userId 以加载 RAG 配置
+        abortSignal, // 传递 abortSignal 以支持中断
+        onProgress, // 传递进度回调
+        knownMaterials: params.knownMaterials, // 完整的参考资料
       })
 
       // 格式化为 Markdown
@@ -125,22 +164,64 @@ export const generateLessonTool = tool({
       
       // 主要内容
       sections.push(`## 📚 学习目标\n${lessonContent.introduction}`)
-      sections.push(`## 🎯 关键要点\n${lessonContent.keyPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}`)
+      
+      // 格式化关键要点（现在是对象数组）
+      const keyPointsText = lessonContent.keyPoints.map((kp, i) => {
+        let text = `${i + 1}. **${kp.point}**\n   ${kp.explanation}`
+        if (kp.importance) {
+          text += `\n   > 💡 **重要性**: ${kp.importance}`
+        }
+        return text
+      }).join('\n\n')
+      sections.push(`## 🎯 关键要点\n\n${keyPointsText}`)
+      
       sections.push(`## 📖 详细内容\n${lessonContent.detailedContent}`)
 
-      // 练习题
+      // 常见误区（现在是对象数组）
+      if (lessonContent.commonMisconceptions && lessonContent.commonMisconceptions.length > 0) {
+        const misconceptionsText = lessonContent.commonMisconceptions.map((m, i) => 
+          `${i + 1}. **误区**: ${m.misconception}\n   **纠正**: ${m.correction}`
+        ).join('\n\n')
+        sections.push(`## ⚠️ 常见误区\n\n${misconceptionsText}`)
+      }
+
+      // 实际应用
+      if (lessonContent.realWorldApplications && lessonContent.realWorldApplications.length > 0) {
+        const applicationsText = lessonContent.realWorldApplications.map((app, i) => 
+          `${i + 1}. ${app}`
+        ).join('\n')
+        sections.push(`## 🌍 实际应用\n\n${applicationsText}`)
+      }
+
+      // 练习题（现在有更多字段）
       if (lessonContent.exercises && lessonContent.exercises.length > 0) {
         const exerciseParts: string[] = ['## 💪 练习题\n']
         
         lessonContent.exercises.forEach((ex, i) => {
           const exerciseLines: string[] = []
           exerciseLines.push(`### 练习 ${i + 1}\n`)
+          
+          // 添加难度标签
+          if (ex.difficulty) {
+            const difficultyEmoji = ex.difficulty === 'easy' ? '🟢' : ex.difficulty === 'medium' ? '🟡' : '🔴'
+            exerciseLines.push(`${difficultyEmoji} **难度**: ${ex.difficulty}\n`)
+          }
+          
           exerciseLines.push(`**题目**: ${ex.question}\n`)
           
           if (ex.options && ex.options.length > 0) {
             exerciseLines.push('**选项**:')
             ex.options.forEach((opt, j) => {
               exerciseLines.push(`${String.fromCharCode(65 + j)}. ${opt}`)
+            })
+            exerciseLines.push('')
+          }
+
+          // 添加提示
+          if (ex.hints && ex.hints.length > 0) {
+            exerciseLines.push('**提示**:')
+            ex.hints.forEach((hint, j) => {
+              exerciseLines.push(`💡 ${j + 1}. ${hint}`)
             })
             exerciseLines.push('')
           }
@@ -155,18 +236,52 @@ export const generateLessonTool = tool({
         sections.push(exerciseParts.join('\n'))
       }
 
-      // 学习资源
+      // 学习资源（现在是对象数组）
       if (lessonContent.resources.length > 0) {
         const resourceLines = ['## 📚 拓展资源\n']
         lessonContent.resources.forEach((r, i) => {
-          resourceLines.push(`${i + 1}. ${r}`)
+          const typeEmoji = {
+            documentation: '📖',
+            tutorial: '📝',
+            video: '🎥',
+            article: '📰',
+            book: '📚',
+            course: '🎓',
+            tool: '🔧'
+          }[r.type] || '📌'
+          
+          let resourceText = `${i + 1}. ${typeEmoji} **${r.title}**`
+          if (r.difficulty) {
+            const diffEmoji = r.difficulty === 'beginner' ? '🟢' : r.difficulty === 'intermediate' ? '🟡' : '🔴'
+            resourceText += ` ${diffEmoji}`
+          }
+          resourceText += `\n   ${r.description}`
+          if (r.url) {
+            resourceText += `\n   🔗 [访问链接](${r.url})`
+          }
+          resourceLines.push(resourceText)
+          resourceLines.push('')
         })
         sections.push(resourceLines.join('\n'))
       }
 
+      // 总结
+      if (lessonContent.summary) {
+        sections.push(`## 📝 总结\n\n${lessonContent.summary}`)
+      }
+
+      // 下一步
+      if (lessonContent.nextSteps && lessonContent.nextSteps.length > 0) {
+        const nextStepsText = lessonContent.nextSteps.map((step, i) => 
+          `${i + 1}. ${step}`
+        ).join('\n')
+        sections.push(`## 🚀 下一步学习\n\n${nextStepsText}`)
+      }
+
       sections.push(`---\n*生成时间: ${new Date().toLocaleString('zh-CN')}*`)
       
-      const lessonMarkdown = sections.join('\n\n')
+      // 不在最终结果中包含进度信息，进度只在生成过程中的控制台显示
+      const lessonMarkdown = sections.join('\n\n');
 
       // 保存到数据库（如果有 userId）
       let savedLessonId: string | undefined

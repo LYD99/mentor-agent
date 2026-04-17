@@ -22,6 +22,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') // 'all' | 'daily' | 'weekly' | 'monthly' | 'materials'
   const folderId = searchParams.get('folderId') // 可选：按文件夹过滤
+  const mapId = searchParams.get('mapId') // 可选：按地图过滤
   const limit = parseInt(searchParams.get('limit') || '20')
   const offset = parseInt(searchParams.get('offset') || '0')
 
@@ -36,6 +37,11 @@ export async function GET(req: Request) {
       // 如果指定了文件夹，添加过滤条件
       if (folderId) {
         whereClause.folderId = folderId
+      }
+      
+      // 如果指定了地图，添加过滤条件
+      if (mapId) {
+        whereClause.mapId = mapId
       }
 
       // 获取 LearningMaterial 表的数据，关联 DailyPlan 获取计划日期

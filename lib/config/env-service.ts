@@ -10,11 +10,20 @@ export type EnvConfigDefinition = {
   required: boolean
   defaultValue?: string
   sensitive?: boolean
-  valueType?: 'string' | 'number' | 'boolean' | 'secret'
+  valueType?: 'string' | 'number' | 'boolean' | 'secret' | 'select'
   validation?: {
     pattern?: string
-    options?: string[]
+    options?: string[] | Array<{ value: string; label: string; description?: string }>
   }
+  hidden?: boolean // 不在 UI 显示，但保留功能
+  dependsOn?: string // 级联依赖：只有当指定的配置项为 true 时才显示此配置
+  dependsOnKey?: string // 级联依赖：实际依赖的配置项 key
+  dependsOnValue?: string // 级联依赖：依赖的配置项需要等于此值才显示
+  // 配置组：当这个配置项改变时，自动同步设置其他配置项
+  syncWith?: Array<{
+    key: string
+    value: string | ((mainValue: string) => string)
+  }>
 }
 
 // 环境变量定义
@@ -31,14 +40,15 @@ export const ENV_CONFIG_DEFINITIONS: EnvConfigDefinition[] = [
   },
 
   // 认证
-  {
-    key: 'AUTH_SECRET',
-    label: '认证密钥',
-    description: 'NextAuth.js 使用的密钥',
-    category: 'auth',
-    required: true,
-    sensitive: true,
-  },
+  // AUTH_SECRET 由启动脚本自动生成，不在设置页面显示
+  // {
+  //   key: 'AUTH_SECRET',
+  //   label: '认证密钥',
+  //   description: 'NextAuth.js 使用的密钥（自动生成）',
+  //   category: 'auth',
+  //   required: true,
+  //   sensitive: true,
+  // },
   {
     key: 'AUTH_URL',
     label: '认证 URL',
@@ -77,11 +87,128 @@ export const ENV_CONFIG_DEFINITIONS: EnvConfigDefinition[] = [
   },
   {
     key: 'TAVILY_API_KEY',
-    label: 'research api key',
-    description: 'Tavily API 密钥',
+    label: 'Research API Key',
+    description: 'Tavily API 密钥（用于网络研究功能）',
     category: 'ai',
     required: false,
     sensitive: true,
+  },
+  {
+    key: 'LESSON_AGENT_MODEL',
+    label: 'Lesson Agent 模型',
+    description: '学习资料生成专用模型（推荐 gpt-4o）',
+    category: 'ai',
+    required: false,
+    sensitive: false,
+  },
+  {
+    key: 'ADVISOR_AGENT_MODEL',
+    label: 'Advisor Agent 模型',
+    description: '学习辅导专用模型（推荐 gpt-4o）',
+    category: 'ai',
+    required: false,
+    sensitive: false,
+  },
+  {
+    key: 'PLAN_AGENT_MODEL',
+    label: 'Plan Agent 模型',
+    description: '成长地图生成专用模型（推荐 gpt-4o）',
+    category: 'ai',
+    required: false,
+    sensitive: false,
+  },
+  {
+    key: 'SCHEDULE_AGENT_MODEL',
+    label: 'Schedule Agent 模型',
+    description: '学习计划生成专用模型（可用 gpt-4o-mini）',
+    category: 'ai',
+    required: false,
+    sensitive: false,
+  },
+  {
+    key: 'SCHEDULE_BATCH_CONCURRENCY',
+    label: 'Schedule Agent 并发数',
+    description: '学习计划批次生成并发限制（1-20，默认 5，DeepSeek 推荐 3-5）',
+    category: 'ai',
+    required: false,
+    defaultValue: '5',
+    sensitive: false,
+    valueType: 'number',
+  },
+  // 质量验证配置
+  {
+    key: 'ENABLE_QUALITY_VALIDATION',
+    label: '启用质量验证',
+    description: '是否启用学习资料质量验证',
+    category: 'ai',
+    required: false,
+    defaultValue: 'true',
+    sensitive: false,
+    valueType: 'boolean',
+    validation: {
+      options: ['true', 'false'],
+    },
+  },
+  {
+    key: 'QUALITY_VALIDATION_MODE',
+    label: '验证模式',
+    description: '选择质量验证策略',
+    category: 'ai',
+    required: false,
+    defaultValue: 'rule-based&llm-based',
+    sensitive: false,
+    valueType: 'select',
+    validation: {
+      options: [
+        { value: 'rule-based', label: '仅规则检查', description: '基于代码规则的质量检查' },
+        { value: 'rule-based&llm-based', label: '规则检查 + LLM 评估', description: '双重验证，更全面（推荐）' },
+      ],
+    },
+    syncWith: [
+      { 
+        key: 'ENABLE_LLM_QUALITY_ASSESSMENT', 
+        value: (mode: string) => mode === 'rule-based&llm-based' ? 'true' : 'false'
+      },
+    ],
+    dependsOn: 'ENABLE_QUALITY_VALIDATION',
+  },
+  {
+    key: 'MIN_QUALITY_SCORE',
+    label: '规则检查阈值',
+    description: '代码规则检查的最低分数（0-100，默认 70）',
+    category: 'ai',
+    required: false,
+    defaultValue: '70',
+    sensitive: false,
+    valueType: 'number',
+    dependsOn: 'ENABLE_QUALITY_VALIDATION',
+  },
+  {
+    key: 'ENABLE_LLM_QUALITY_ASSESSMENT',
+    label: 'ENABLE_LLM_QUALITY_ASSESSMENT',
+    description: '内部配置：是否启用 LLM 评估',
+    category: 'ai',
+    required: false,
+    defaultValue: 'true',
+    sensitive: false,
+    valueType: 'boolean',
+    validation: {
+      options: ['true', 'false'],
+    },
+    hidden: true, // 隐藏，由验证模式自动控制
+  },
+  {
+    key: 'LLM_QUALITY_MIN_SCORE',
+    label: 'LLM 评估阈值',
+    description: 'LLM 质量评估的最低分数（0-100，默认 75）',
+    category: 'ai',
+    required: false,
+    defaultValue: '75',
+    sensitive: false,
+    valueType: 'number',
+    dependsOn: 'ENABLE_QUALITY_VALIDATION',
+    dependsOnValue: 'rule-based&llm-based', // 依赖 QUALITY_VALIDATION_MODE 的值
+    dependsOnKey: 'QUALITY_VALIDATION_MODE', // 实际依赖的配置项
   },
 
   // 存储
@@ -120,14 +247,14 @@ export const ENV_CONFIG_DEFINITIONS: EnvConfigDefinition[] = [
  * 获取所有环境变量定义
  */
 export function getEnvConfigDefinitions(): EnvConfigDefinition[] {
-  return ENV_CONFIG_DEFINITIONS
+  return ENV_CONFIG_DEFINITIONS.filter((def) => !def.hidden)
 }
 
 /**
  * 获取指定分类的环境变量定义
  */
 export function getEnvConfigDefinitionsByCategory(category: string): EnvConfigDefinition[] {
-  return ENV_CONFIG_DEFINITIONS.filter((def) => def.category === category)
+  return ENV_CONFIG_DEFINITIONS.filter((def) => def.category === category && !def.hidden)
 }
 
 /**
@@ -196,7 +323,7 @@ function writeEnvFile(values: Record<string, string>): void {
   const categories = new Set(ENV_CONFIG_DEFINITIONS.map(def => def.category))
   
   for (const category of categories) {
-    const defs = ENV_CONFIG_DEFINITIONS.filter(def => def.category === category)
+    const defs = ENV_CONFIG_DEFINITIONS.filter(def => def.category === category && !def.hidden)
     if (defs.length === 0) continue
 
     lines.push(`# ${category.toUpperCase()}`)
@@ -259,6 +386,16 @@ export function setEnvValue(key: string, value: string): void {
 
   const currentValues = readEnvFile()
   currentValues[key] = value
+  
+  // 如果有 syncWith 配置，自动同步设置其他配置项
+  if (definition.syncWith) {
+    for (const sync of definition.syncWith) {
+      const syncValue = typeof sync.value === 'function' ? sync.value(value) : sync.value
+      currentValues[sync.key] = syncValue
+      console.log(`[Env Service] Auto-sync ${sync.key} = ${syncValue} (from ${key})`)
+    }
+  }
+  
   writeEnvFile(currentValues)
   
   // 清除缓存，确保下次读取时获取最新值

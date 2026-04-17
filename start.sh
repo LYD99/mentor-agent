@@ -5,6 +5,12 @@
 
 set -e  # 遇到错误立即退出
 
+# 通过 `curl ... | bash` 管道调用时，stdin 被 curl 占用，
+# 将其重定向到 /dev/tty 以支持交互式 read
+if [ ! -t 0 ] && [ -r /dev/tty ]; then
+    exec < /dev/tty
+fi
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,6 +33,198 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# 跨平台打开 URL
+open_url() {
+    local url=$1
+    if command -v open >/dev/null 2>&1; then
+        open "$url" >/dev/null 2>&1 &
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$url" >/dev/null 2>&1 &
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoProfile -Command "Start-Process '$url'" >/dev/null 2>&1 &
+    else
+        log_warning "无法自动打开浏览器，请手动访问：$url"
+    fi
+}
+
+# 在 .env 中写入/更新某个 key 的值（支持 KEY=、# KEY= 两种形式）
+set_env_var() {
+    local key=$1
+    local value=$2
+    # 为 sed 转义分隔符与反斜杠
+    local escaped
+    escaped=$(printf '%s' "$value" | sed -e 's/[\\|&]/\\&/g')
+
+    if grep -q "^${key}=" .env; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|^${key}=.*|${key}=${escaped}|" .env
+        else
+            sed -i "s|^${key}=.*|${key}=${escaped}|" .env
+        fi
+    elif grep -q "^# *${key}=" .env; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|^# *${key}=.*|${key}=${escaped}|" .env
+        else
+            sed -i "s|^# *${key}=.*|${key}=${escaped}|" .env
+        fi
+    else
+        echo "${key}=${value}" >> .env
+    fi
+}
+
+# 读取 .env 中某个 key 的值（不含引号）
+get_env_var() {
+    local key=$1
+    [ -f .env ] || return 0
+    grep "^${key}=" .env | head -n1 | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+# 校验 AI API Key 是否可用
+# 返回：0=有效，1=认证失败，2=无法判断（网络错误等）
+validate_ai_key() {
+    local key=$1
+    local base_url=${2:-https://api.deepseek.com}
+    local model=${3:-deepseek-chat}
+
+    # 去除末尾的 / 与 /v1，避免拼接重复
+    base_url="${base_url%/}"
+    base_url="${base_url%/v1}"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        return 2
+    fi
+
+    local http_code
+    http_code=$(curl -sS -o /dev/null -w "%{http_code}" \
+        -X POST "${base_url}/v1/chat/completions" \
+        -H "Authorization: Bearer ${key}" \
+        -H "Content-Type: application/json" \
+        -d "{\"model\":\"${model}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}" \
+        --max-time 15 2>/dev/null || echo "000")
+
+    case "$http_code" in
+        200) return 0 ;;
+        401|403) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+# 交互式引导用户配置 AI_API_KEY（无效/为空时打开 DeepSeek 平台）
+prompt_ai_key() {
+    local current_key current_base current_model
+    current_key=$(get_env_var AI_API_KEY)
+    current_base=$(get_env_var AI_BASE_URL)
+    current_model=$(get_env_var AI_MODEL)
+
+    local needs_key=false
+    if [ -z "$current_key" ] || [ "$current_key" = "your-api-key-here" ]; then
+        needs_key=true
+    else
+        log_info "校验 AI_API_KEY 有效性..."
+        validate_ai_key "$current_key" "$current_base" "$current_model"
+        case $? in
+            0)
+                log_success "AI_API_KEY 校验通过"
+                return 0
+                ;;
+            1)
+                log_warning "AI_API_KEY 认证失败，需要重新配置"
+                needs_key=true
+                ;;
+            2)
+                log_warning "无法连通 AI 服务进行校验（网络问题或自定义服务），跳过校验"
+                return 0
+                ;;
+        esac
+    fi
+
+    if $needs_key; then
+        echo ""
+        log_warning "AI_API_KEY 未配置或无效，将自动打开 DeepSeek 控制台"
+        log_info "页面：https://platform.deepseek.com/api_keys"
+        open_url "https://platform.deepseek.com/api_keys"
+        echo ""
+        echo "请在浏览器中 登录/注册 并 创建 API Key，然后粘贴到此处。"
+        echo "（若使用其他 OpenAI 兼容服务，也可直接粘贴对应 Key）"
+        echo ""
+
+        local attempt=0
+        while true; do
+            attempt=$((attempt + 1))
+            printf "请输入 AI_API_KEY: "
+            local input_key=""
+            IFS= read -r input_key || true
+            input_key="${input_key#"${input_key%%[![:space:]]*}"}" # 去前空格
+            input_key="${input_key%"${input_key##*[![:space:]]}"}" # 去后空格
+
+            if [ -z "$input_key" ]; then
+                log_error "API Key 不能为空"
+                [ "$attempt" -ge 5 ] && { log_error "多次输入失败，退出"; exit 1; }
+                continue
+            fi
+
+            # 若用户之前未配置过 base_url 或仍是默认 openai，则默认设置为 DeepSeek
+            local use_base="$current_base"
+            local use_model="$current_model"
+            if [ -z "$use_base" ] || [ "$use_base" = "https://api.openai.com" ]; then
+                use_base="https://api.deepseek.com"
+            fi
+            if [ -z "$use_model" ]; then
+                use_model="deepseek-chat"
+            fi
+
+            log_info "校验 API Key..."
+            validate_ai_key "$input_key" "$use_base" "$use_model"
+            local rc=$?
+            if [ $rc -eq 0 ]; then
+                set_env_var AI_API_KEY "$input_key"
+                set_env_var AI_BASE_URL "$use_base"
+                set_env_var AI_MODEL "$use_model"
+                log_success "AI_API_KEY 校验通过，已写入 .env"
+                return 0
+            elif [ $rc -eq 1 ]; then
+                log_error "API Key 认证失败，请重试（或按 Ctrl+C 退出）"
+                [ "$attempt" -ge 5 ] && { log_error "多次校验失败，退出"; exit 1; }
+            else
+                log_warning "无法连接 AI 服务进行校验，暂按你输入保存"
+                set_env_var AI_API_KEY "$input_key"
+                set_env_var AI_BASE_URL "$use_base"
+                set_env_var AI_MODEL "$use_model"
+                return 0
+            fi
+        done
+    fi
+}
+
+# 交互式引导用户配置 TAVILY_API_KEY（可选）
+prompt_tavily_key() {
+    local current_key
+    current_key=$(get_env_var TAVILY_API_KEY)
+
+    if [ -n "$current_key" ] && [ "$current_key" != "your-tavily-key" ]; then
+        log_success "TAVILY_API_KEY 已配置"
+        return 0
+    fi
+
+    echo ""
+    log_info "TAVILY_API_KEY 未配置（用于联网搜索功能，可选）"
+    log_info "页面：https://app.tavily.com/home"
+    open_url "https://app.tavily.com/home"
+    echo ""
+    printf "请输入 TAVILY_API_KEY（可选，直接回车跳过）: "
+    local tavily_key=""
+    IFS= read -r tavily_key || true
+    tavily_key="${tavily_key#"${tavily_key%%[![:space:]]*}"}"
+    tavily_key="${tavily_key%"${tavily_key##*[![:space:]]}"}"
+
+    if [ -n "$tavily_key" ]; then
+        set_env_var TAVILY_API_KEY "$tavily_key"
+        log_success "TAVILY_API_KEY 已保存"
+    else
+        log_info "已跳过 Tavily 配置（联网搜索功能将不可用）"
+    fi
 }
 
 # 打印标题
@@ -73,20 +271,7 @@ check_env() {
         log_warning ".env 文件不存在，正在从模板创建..."
         if [ -f .env.example ]; then
             cp .env.example .env
-            log_warning "已创建 .env 文件，请编辑并填入必要的配置："
-            log_warning "  - DATABASE_URL: 数据库连接字符串"
-            log_warning "  - AUTH_SECRET: 认证密钥（运行: openssl rand -base64 32）"
-            log_warning "  - AI_API_KEY: AI API 密钥"
-            log_warning "  - ENCRYPTION_KEY: 加密密钥（运行: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"）"
-            echo ""
-            read -p "是否现在编辑 .env 文件？(y/n) " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                ${EDITOR:-nano} .env
-            else
-                log_error "请手动编辑 .env 文件后重新运行此脚本"
-                exit 1
-            fi
+            log_success "已创建 .env 文件"
         else
             log_error ".env.example 文件不存在！"
             exit 1
@@ -95,20 +280,60 @@ check_env() {
         log_success ".env 文件已存在"
     fi
     
-    # 检查关键环境变量
-    source .env
-    if [ -z "$AI_API_KEY" ] || [ "$AI_API_KEY" = "your-api-key-here" ]; then
-        log_error "AI_API_KEY 未配置！请编辑 .env 文件"
-        exit 1
+    # 自动生成 AUTH_SECRET（如果未配置）
+    if ! grep -q "^AUTH_SECRET=" .env || grep -q "^AUTH_SECRET=your-secret-here" .env || grep -q "^AUTH_SECRET=$" .env; then
+        log_info "自动生成 AUTH_SECRET..."
+        AUTH_SECRET=$(openssl rand -base64 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+        if grep -q "^AUTH_SECRET=" .env; then
+            # 替换现有行
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s|^AUTH_SECRET=.*|AUTH_SECRET=$AUTH_SECRET|" .env
+            else
+                sed -i "s|^AUTH_SECRET=.*|AUTH_SECRET=$AUTH_SECRET|" .env
+            fi
+        else
+            # 添加新行
+            echo "AUTH_SECRET=$AUTH_SECRET" >> .env
+        fi
+        log_success "AUTH_SECRET 已自动生成"
     fi
-    if [ -z "$AUTH_SECRET" ] || [ "$AUTH_SECRET" = "your-secret-here" ]; then
-        log_error "AUTH_SECRET 未配置！请编辑 .env 文件"
-        exit 1
+    
+    # 自动生成 ENCRYPTION_KEY（如果未配置）
+    if ! grep -q "^ENCRYPTION_KEY=" .env || grep -q "^ENCRYPTION_KEY=your-64-char-hex-key-here" .env || grep -q "^ENCRYPTION_KEY=$" .env; then
+        log_info "自动生成 ENCRYPTION_KEY..."
+        ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+        if grep -q "^ENCRYPTION_KEY=" .env; then
+            # 替换现有行
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                sed -i '' "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$ENCRYPTION_KEY|" .env
+            else
+                sed -i "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$ENCRYPTION_KEY|" .env
+            fi
+        else
+            # 添加新行（在合适的位置）
+            if grep -q "^# ENCRYPTION" .env; then
+                # 如果有 ENCRYPTION 注释，在其后添加
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "/^# ENCRYPTION/a\\
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+" .env
+                else
+                    sed -i "/^# ENCRYPTION/a ENCRYPTION_KEY=$ENCRYPTION_KEY" .env
+                fi
+            else
+                # 否则添加到文件末尾
+                echo "" >> .env
+                echo "# ENCRYPTION" >> .env
+                echo "ENCRYPTION_KEY=$ENCRYPTION_KEY" >> .env
+            fi
+        fi
+        log_success "ENCRYPTION_KEY 已自动生成"
     fi
-    if [ -z "$ENCRYPTION_KEY" ] || [ "$ENCRYPTION_KEY" = "your-64-char-hex-key-here" ]; then
-        log_error "ENCRYPTION_KEY 未配置！请编辑 .env 文件"
-        exit 1
-    fi
+    
+    # 交互式引导用户配置必要/可选的 API Key
+    prompt_ai_key
+    prompt_tavily_key
+
     log_success "环境变量配置检查通过"
 }
 

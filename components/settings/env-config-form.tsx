@@ -12,6 +12,7 @@ type EnvConfigFormProps = {
   currentValue: string
   actualValue: string
   onSave: (value: string) => Promise<{ requiresRestart: boolean }>
+  onValueChange?: (value: string) => void
 }
 
 export function EnvConfigForm({
@@ -19,6 +20,7 @@ export function EnvConfigForm({
   currentValue,
   actualValue,
   onSave,
+  onValueChange,
 }: EnvConfigFormProps) {
   const [value, setValue] = useState(currentValue)
   const [saving, setSaving] = useState(false)
@@ -26,6 +28,14 @@ export function EnvConfigForm({
   const [success, setSuccess] = useState(false)
   const [showSecret, setShowSecret] = useState(false)
   const [requiresRestart, setRequiresRestart] = useState(false)
+
+  const handleValueChange = (newValue: string) => {
+    setValue(newValue)
+    // 立即通知父组件值已改变（用于实时显示/隐藏）
+    if (onValueChange) {
+      onValueChange(newValue)
+    }
+  }
 
   const handleSave = async () => {
     setError(null)
@@ -58,16 +68,27 @@ export function EnvConfigForm({
       return (
         <select
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => handleValueChange(e.target.value)}
           disabled={saving}
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <option value="">请选择...</option>
-          {definition.validation.options.map((option: string) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
+          {definition.validation.options.map((option: string | { value: string; label: string; description?: string }) => {
+            // 支持两种格式：字符串数组 或 对象数组
+            if (typeof option === 'string') {
+              return (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              )
+            } else {
+              return (
+                <option key={option.value} value={option.value} title={option.description}>
+                  {option.label}
+                </option>
+              )
+            }
+          })}
         </select>
       )
     }
@@ -77,7 +98,7 @@ export function EnvConfigForm({
         <Input
           type={inputType}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => handleValueChange(e.target.value)}
           disabled={saving}
           placeholder={definition.defaultValue || `输入 ${definition.label}`}
         />

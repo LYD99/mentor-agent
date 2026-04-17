@@ -75,13 +75,26 @@ IMPORTANT: Generate ONLY metadata, not full learning content. The actual lessons
 
   // Lesson Agent - 生成学习资料
   LESSON_AGENT: {
-    BASE: `Generate comprehensive learning materials for the following task:
+    BASE: `You are a professional learning content creator with expertise in instructional design and pedagogy. Your goal is to create high-quality, engaging, and effective learning materials.
 
 Task Information:
 - Title: {{taskTitle}}
 - Description: {{taskDescription}}
 - Type: {{taskType}}
 - Stage: {{stageTitle}}
+
+CRITICAL OUTPUT FORMAT: Return a valid JSON object with this exact structure:
+- introduction: string (2-3 paragraphs)
+- keyPoints: array of {point, explanation, importance?}
+- detailedContent: string (markdown with ## headings)
+- commonMisconceptions: array of {misconception, correction} (optional)
+- realWorldApplications: array of strings (optional)
+- exercises: array of {question, type, answer, explanation, difficulty?, options?, hints?} (optional)
+- resources: array of {title, type, description, url?, difficulty?} (required, at least 1)
+- summary: string (required)
+- nextSteps: array of strings (optional)
+- estimatedStudyTime: number (optional)
+- prerequisites: array of strings (optional)
 `,
 
     WITH_METADATA: `
@@ -92,41 +105,74 @@ Learning Metadata (from schedule):
     WITH_RESEARCH: `
 Research Results (relevant resources found):
 {{researchSummary}}
+
+Use these research findings to:
+- Validate and enrich your content with authoritative sources
+- Include up-to-date information and best practices
+- Reference specific examples from reputable sources
+- Provide diverse perspectives on the topic
 `,
 
     REQUIREMENTS_WITH_EXERCISES: `
-Create engaging learning content that includes:
-1. A brief introduction to the topic
-2. 3-7 key learning points
-3. Detailed explanation with practical examples
-4. Practice exercises with answers and explanations (2-5 exercises)
-5. Additional learning resources (include URLs from research if available)
+Content Requirements:
+
+1. Introduction (2-3 paragraphs): Hook learner, explain importance, set objectives
+2. Key Points (3-7): Each with point, explanation, and importance
+3. Detailed Content: In-depth explanation with 2-3 practical examples
+   - Use markdown ## for sections
+   - Keep code examples concise (10-20 lines max per example)
+   - Focus on clarity, avoid repetition
+4. Common Misconceptions (optional): 2-3 items with corrections
+5. Real-World Applications (optional): 2-3 brief practical use cases
+6. Exercises (2-4): Include question, type, answer, explanation, optional hints/difficulty
+7. Resources (3-5): Each with title, type, description, optional url/difficulty
+8. Summary: Concise 1-paragraph recap
+9. Next Steps (optional): 2-3 follow-up topics
+
+IMPORTANT: Keep content focused and concise. Avoid overly long explanations or repetitive patterns.
 `,
 
     REQUIREMENTS_NO_EXERCISES: `
-Create engaging learning content that includes:
-1. A brief introduction to the topic
-2. 3-7 key learning points
-3. Detailed explanation with practical examples
-4. Additional learning resources (include URLs from research if available)
+Content Requirements:
+
+1. Introduction (2-3 paragraphs): Hook learner, explain importance, set objectives
+2. Key Points (3-7): Each with point, explanation, and importance
+3. Detailed Content: In-depth explanation with 2-3 practical examples
+   - Use markdown ## for sections
+   - Keep code examples concise (10-20 lines max per example)
+   - Focus on clarity, avoid repetition
+4. Common Misconceptions (optional): 2-3 items with corrections
+5. Real-World Applications (optional): 2-3 brief practical use cases
+6. Resources (3-5): Each with title, type, description, optional url/difficulty
+7. Summary: Concise 1-paragraph recap
+8. Next Steps (optional): 2-3 follow-up topics
+
+IMPORTANT: Keep content focused and concise. Avoid overly long explanations or repetitive patterns.
+`,
+
+    QUALITY_STANDARDS: `
+Quality Standards: Be accurate, clear, deep, practical, engaging, and well-structured.
+
+JSON Format Rules:
+- keyPoints: array of objects {point, explanation, importance?}
+- resources: array of objects {title, type, description, url?, difficulty?} - at least 1 required
+- All required fields must be present and non-empty
+- Optional fields can be omitted or set to empty arrays
+- Use valid JSON syntax
 `,
 
     DURATION_HINT: `
-Make it practical, easy to understand, and suitable for {{duration}} minutes of study.
+Target study time: {{duration}} minutes. Adjust depth accordingly.
 `,
 
     GENERAL_HINT: `
-Make it practical and easy to understand.
+Create comprehensive yet focused content. Balance breadth and depth.
 `,
 
     RETRY_HINT: `
 ⚠️ Previous attempt failed: {{error}}
 
-Please try again with:
-1. More structured content
-2. Clear, actionable learning points
-3. Practical examples
-4. Valid exercise formats (if included)
+Fix: Ensure valid JSON with all required fields (introduction, keyPoints as objects, detailedContent, resources as objects, summary).
 `,
   },
 } as const
@@ -233,6 +279,9 @@ export function buildLessonAgentPrompt(params: {
     prompt += AGENT_PROMPTS.LESSON_AGENT.WITH_RESEARCH
       .replace('{{researchSummary}}', params.researchSummary)
   }
+  
+  // 添加质量标准
+  prompt += AGENT_PROMPTS.LESSON_AGENT.QUALITY_STANDARDS
   
   // 添加要求
   prompt += params.includeExercises 
