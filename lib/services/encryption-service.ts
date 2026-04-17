@@ -1,20 +1,24 @@
 import crypto from 'crypto'
+import { ensureEnvSecret } from '../config/env-runtime'
 
 const ALGORITHM = 'aes-256-gcm'
+const EXPECTED_KEY_LENGTH = 64 // 32 字节 hex 编码
 
-// 获取加密密钥，如果未设置则抛出错误
+/**
+ * 获取加密密钥：自愈式 —— 缺失或格式不合法（不是 64 位 hex）都会自动重新
+ * 生成并持久化到 .env.local。
+ *
+ * ⚠️ 注意：ENCRYPTION_KEY 换掉后，旧密文（比如之前加密的 RAG API Key）
+ *    将无法解密。本函数只在 key 完全缺失/格式不合法时才重新生成，不会
+ *    因为「觉得不够安全」而轻易重置。
+ */
 function getEncryptionKey(): string {
-  const key = process.env.ENCRYPTION_KEY
-  
-  if (!key) {
-    throw new Error('ENCRYPTION_KEY environment variable is not set. Please add it to your .env file.')
-  }
-  
-  if (key.length !== 64) {
-    throw new Error(`ENCRYPTION_KEY must be 64 hex characters (32 bytes), got ${key.length} characters`)
-  }
-  
-  return key
+  return ensureEnvSecret('ENCRYPTION_KEY', {
+    generator: () => crypto.randomBytes(32).toString('hex'),
+    placeholders: ['your-64-char-hex-key-here', ''],
+    logPrefix: '[encryption]',
+    validate: (v) => v.length === EXPECTED_KEY_LENGTH && /^[0-9a-fA-F]+$/.test(v),
+  })
 }
 
 export class EncryptionService {

@@ -1,13 +1,25 @@
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import { PrismaAdapter } from '@auth/prisma-adapter'
-import { prisma } from './db'
+import crypto from 'crypto'
 import bcrypt from 'bcryptjs'
-import { getEnv } from './config/env-runtime'
+import { prisma } from './db'
+import { getEnv, ensureEnvSecret } from './config/env-runtime'
+
+/**
+ * 把 AUTH_SECRET 做成「自愈」的基础设施：缺就自动生成并持久化，
+ * 应用永远不会因为 AUTH_SECRET 缺失而抛 MissingSecret。
+ * （如果用户/启动脚本已经配好就直接用，开发/部署零心智负担。）
+ */
+const AUTH_SECRET = ensureEnvSecret('AUTH_SECRET', {
+  generator: () => getEnv('NEXTAUTH_SECRET') || crypto.randomBytes(32).toString('base64'),
+  placeholders: ['your-secret-here', ''],
+  logPrefix: '[auth]',
+})
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
-  secret: getEnv('AUTH_SECRET') || getEnv('NEXTAUTH_SECRET'),
+  secret: AUTH_SECRET,
   providers: [
     Credentials({
       credentials: {
