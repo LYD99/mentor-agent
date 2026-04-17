@@ -89,56 +89,32 @@
 
 ### 一键启动（推荐）
 
-1. 克隆仓库
+只需一条命令，自动完成克隆、依赖安装、数据库初始化、密钥生成与启动：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yourusername/mentor-agent/main/install.sh | bash
+```
+
+> 如果还没装 Node.js 18+，请先安装：macOS 上 `brew install node`，或从 [nodejs.org](https://nodejs.org/) 下载。
+
+脚本会自动完成：
+- ✅ 克隆仓库到 `./mentor-agent`
+- ✅ 检查 Node.js / 安装 pnpm
+- ✅ 生成 `AUTH_SECRET` 与 `ENCRYPTION_KEY`
+- ✅ 若 `AI_API_KEY` 无效/为空 → 自动打开 [DeepSeek 控制台](https://platform.deepseek.com/api_keys) 并引导输入与实时校验
+- ✅ 若 `TAVILY_API_KEY` 为空 → 自动打开 [Tavily 控制台](https://app.tavily.com/home) 并引导输入（可跳过）
+- ✅ 安装依赖、创建目录、初始化 SQLite 数据库
+- ✅ 启动开发服务器并自动打开浏览器 `http://localhost:3000`
+
+### 已克隆仓库？手动启动
 
 ```bash
 git clone https://github.com/yourusername/mentor-agent.git
 cd mentor-agent
-```
-
-2. 配置环境变量
-
-```bash
-cp .env.example .env
-# 编辑 .env 文件，填入必要的配置
-```
-
-必填配置项：
-
-```env
-# 数据库
-DATABASE_URL=file:./data/app.db
-
-# 认证（使用 openssl rand -base64 32 生成）
-AUTH_SECRET=your-secret-here
-AUTH_URL=http://localhost:3000
-
-# AI 配置
-AI_API_KEY=your-api-key-here
-AI_BASE_URL=https://api.openai.com
-AI_MODEL=gpt-4o-mini
-
-# 数据加密（使用 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 生成）
-ENCRYPTION_KEY=your-64-char-hex-key-here
-```
-
-3. 运行启动脚本
-
-```bash
-chmod +x start.sh
 ./start.sh
 ```
 
-脚本会自动完成以下操作：
-- ✅ 检查 Node.js 版本
-- ✅ 安装 pnpm（如果未安装）
-- ✅ 验证环境变量配置
-- ✅ 安装项目依赖
-- ✅ 创建必要的目录
-- ✅ 初始化数据库
-- ✅ 清理孤立文件
-- ✅ 启动开发服务器
-- ✅ 自动打开浏览器
+`start.sh` 同样具备上述交互式引导与自动校验能力。
 
 ### 启动脚本选项
 
